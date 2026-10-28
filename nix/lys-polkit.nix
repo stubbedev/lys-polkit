@@ -1,0 +1,50 @@
+{
+  lib,
+  buildGo127Module,
+  dbus,
+  version,
+  src,
+  # The setuid polkit-agent-helper-1 the agent runs where polkit has no
+  # helper socket: NixOS's security wrapper. Debian and Ubuntu install
+  # it as /usr/lib/polkit-1/polkit-agent-helper-1.
+  helperProgram ? "/run/wrappers/bin/polkit-agent-helper-1",
+}:
+buildGo127Module {
+  pname = "lys-polkit";
+  inherit version src;
+
+  vendorHash = "sha256-Dqsq1pS1CCK3LCtTmMkI/Lr3ZxyRJUlgvu5oyw81uiw=";
+
+  env.CGO_ENABLED = 0;
+
+  ldflags = [
+    "-s"
+    "-X main.version=${version}"
+    "-X main.helperProgram=${helperProgram}"
+  ];
+
+  nativeCheckInputs = [dbus];
+  doCheck = true;
+
+  postInstall = ''
+    install -Dm644 dist/lys-polkit.service.in $out/share/systemd/user/lys-polkit.service
+    substituteInPlace $out/share/systemd/user/lys-polkit.service --replace-fail @bindir@ $out/bin
+  '';
+
+  doInstallCheck = true;
+  installCheckPhase = ''
+    runHook preInstallCheck
+    $out/bin/lys-polkit --version | grep -qxF "lys-polkit ${version}"
+    strings $out/bin/lys-polkit | grep -qF ${helperProgram}
+    grep -qxF "ExecStart=$out/bin/lys-polkit" $out/share/systemd/user/lys-polkit.service
+    runHook postInstallCheck
+  '';
+
+  meta = {
+    description = "The lys desktop's polkit authentication agent";
+    homepage = "https://github.com/stubbedev/lys-polkit";
+    license = lib.licenses.mit;
+    mainProgram = "lys-polkit";
+    platforms = lib.platforms.linux;
+  };
+}

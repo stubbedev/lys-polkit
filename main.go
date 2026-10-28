@@ -3,10 +3,14 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"os/user"
+	"runtime/debug"
 	"strconv"
 	"syscall"
 
@@ -25,9 +29,85 @@ import (
 // -ldflags -X.
 var helperProgram = "/usr/lib/polkit-1/polkit-agent-helper-1"
 
+// version is the release the build names with -ldflags -X; without one
+// it is the module version Go recorded.
+var version string
+
+const usage = `Usage: lys-polkit [--version | --help]
+
+lys-polkit is the lys desktop's polkit authentication agent. It registers
+with polkitd for the user's graphical session on the system bus, runs each
+authentication through polkit's agent helper, and asks for the password
+through lys-shell's dialogs on the session bus. It runs until SIGTERM or
+SIGINT, then unregisters.
+
+Options:
+  --version  print the version and exit
+  --help     print this help and exit
+`
+
+// command is what the arguments ask for.
+type command int
+
+const (
+	serve command = iota
+	printVersion
+	printHelp
+)
+
+// parseArgs reads the command line, without the program name.
+func parseArgs(args []string) (command, error) {
+	fs := flag.NewFlagSet("lys-polkit", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	showVersion := fs.Bool("version", false, "")
+	showHelp := fs.Bool("help", false, "")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return printHelp, nil
+		}
+		return serve, err
+	}
+	switch {
+	case fs.NArg() > 0:
+		return serve, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	case *showVersion && *showHelp:
+		return serve, errors.New("--version and --help exclude each other")
+	case *showVersion:
+		return printVersion, nil
+	case *showHelp:
+		return printHelp, nil
+	default:
+		return serve, nil
+	}
+}
+
+func buildVersion() string {
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		return info.Main.Version
+	}
+	return "unknown"
+}
+
 func main() {
+	cmd, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lys-polkit: %v\n\n%s", err, usage)
+		os.Exit(2)
+	}
+	switch cmd {
+	case printVersion:
+		fmt.Println("lys-polkit", buildVersion())
+		return
+	case printHelp:
+		fmt.Print(usage)
+		return
+	case serve:
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	err := run(ctx)
+	err = run(ctx)
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lys-polkit:", err)

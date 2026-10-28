@@ -1,0 +1,16 @@
+[Unit]
+Description=lys polkit authentication agent
+Documentation=https://github.com/stubbedev/lys-polkit
+PartOf=graphical-session.target
+After=graphical-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=@bindir@/lys-polkit
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

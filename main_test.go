@@ -121,3 +121,37 @@ func TestUserName(t *testing.T) {
 		t.Error("userName found a user for uid 4294967294")
 	}
 }
+
+func TestParseArgs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		args []string
+		want command
+	}{
+		{args: nil, want: serve},
+		{args: []string{"--version"}, want: printVersion},
+		{args: []string{"-version"}, want: printVersion},
+		{args: []string{"--help"}, want: printHelp},
+		{args: []string{"-h"}, want: printHelp},
+	}
+	for _, tc := range tests {
+		got, err := parseArgs(tc.args)
+		if err != nil || got != tc.want {
+			t.Errorf("parseArgs(%q) = %v, %v; want %v", tc.args, got, err, tc.want)
+		}
+	}
+	for _, args := range [][]string{{"--verbose"}, {"serve"}, {"--version", "--help"}, {"--version=maybe"}} {
+		if got, err := parseArgs(args); err == nil {
+			t.Errorf("parseArgs(%q) = %v, want an error", args, got)
+		}
+	}
+}
+
+func TestBuildVersion(t *testing.T) {
+	t.Parallel()
+
+	if got := buildVersion(); got == "" {
+		t.Error("buildVersion is empty")
+	}
+}

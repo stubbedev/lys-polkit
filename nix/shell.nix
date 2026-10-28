@@ -14,6 +14,7 @@
         just
         git
         gh
+        dbus
       ];
 
       env = {
