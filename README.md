@@ -131,7 +131,10 @@ patched godbus and `dbusx`; the dialogs' contract is lys-lib's
 
 ## CI
 
-`.github/workflows/security.yml` runs CodeQL (Go and GitHub Actions), Grype and
+`.github/workflows/ci.yml` runs `just check` in the dev shell, and
+`nix flake check` (the package with its tests and install check, the
+home-manager module check, and the NixOS VM against a real polkitd, on the
+runner's KVM). `.github/workflows/security.yml` runs CodeQL (Go and GitHub Actions), Grype and
 govulncheck, uploading findings to code scanning; dependency review gates
 pull requests. Dependabot keeps the module and the workflows current.
 
