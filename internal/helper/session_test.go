@@ -200,7 +200,7 @@ func TestStartRefuses(t *testing.T) {
 		user, cookie string
 		want         string
 	}{
-		{name: "no socket and no program", tr: helper.Transport{Socket: filepath.Join(t.TempDir(), "none"), Program: filepath.Join(t.TempDir(), "none")}, user: helpertest.User, cookie: helpertest.Cookie, want: "start helper"},
+		{name: "no socket and no program", tr: helper.Transport{Socket: filepath.Join(sockdir.Dir(t), "none"), Program: filepath.Join(t.TempDir(), "none")}, user: helpertest.User, cookie: helpertest.Cookie, want: "start helper"},
 		{name: "a user over two lines", tr: fake.Setuid(), user: "alice\nroot", cookie: helpertest.Cookie, want: "single lines"},
 		{name: "a cookie over two lines", tr: fake.Setuid(), user: helpertest.User, cookie: "a\nb", want: "single lines"},
 		{name: "no user", tr: fake.Setuid(), user: "", cookie: helpertest.Cookie, want: "non-empty"},

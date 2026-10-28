@@ -75,6 +75,7 @@ const (
 type Fake struct {
 	dir     string
 	program string
+	absent  string
 }
 
 // New prepares a fake for the scenario: a link to the test binary
@@ -91,13 +92,14 @@ func New(t testing.TB, s Scenario) *Fake {
 	if err := os.Symlink(self, program); err != nil {
 		t.Fatalf("helpertest: %v", err)
 	}
-	return &Fake{dir: dir, program: program}
+	return &Fake{dir: dir, program: program, absent: filepath.Join(sockdir.Dir(t), "no-socket")}
 }
 
 // Setuid is the transport that runs the fake as the setuid helper: no
-// socket exists.
+// socket exists at a path short enough for a socket address, so dialing
+// it finds nothing rather than refusing an overlong address.
 func (f *Fake) Setuid() helper.Transport {
-	return helper.Transport{Socket: filepath.Join(f.dir, "no-socket"), Program: f.program}
+	return helper.Transport{Socket: f.absent, Program: f.program}
 }
 
 // Socket is the transport that reaches the fake on a socket, which
