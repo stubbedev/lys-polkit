@@ -19,7 +19,9 @@
         );
       };
 
-      vendorHash = null;
+      vendorHash = "sha256-ceXDKM15thwq3MbzOj+0tWpmJFyHFo3QR0HpYPg6kRQ=";
+
+      nativeCheckInputs = [pkgs.dbus];
 
       env.CGO_ENABLED = 0;
 
