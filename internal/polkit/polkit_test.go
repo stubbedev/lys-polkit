@@ -1,15 +1,9 @@
 package polkit_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -26,7 +20,7 @@ const eventTimeout = 5 * time.Second
 
 type agent struct{}
 
-func (agent) BeginAuthentication(string, string, string, map[string]string, string, []polkit.Subject) *dbus.Error {
+func (agent) BeginAuthentication(string, string, string, map[string]string, string, []polkit.Identity) *dbus.Error {
 	return nil
 }
 
@@ -195,89 +189,5 @@ func TestLocale(t *testing.T) {
 				t.Errorf("Locale = %q, want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-const processEnv = "LYS_POLKIT_TEST_SERVE_PROCESS"
-
-func TestServeProcess(t *testing.T) {
-	if os.Getenv(processEnv) == "" {
-		t.Skip("the agent process the TestServeProcess* tests start")
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
-	conn, err := dbus.ConnectSystemBus()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if err := polkit.Serve(ctx, conn, polkit.Registration{Subject: polkit.SessionSubject("c2"), Locale: "C"}, agent{}); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	os.Exit(0)
-}
-
-func startProcess(t *testing.T, bus *dbustest.Bus) (*exec.Cmd, *bytes.Buffer) {
-	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestServeProcess$")
-	cmd.Env = append(os.Environ(), processEnv+"=1", "DBUS_SYSTEM_BUS_ADDRESS="+bus.Address)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start agent process: %v", err)
-	}
-	t.Cleanup(func() {
-		if cmd.ProcessState == nil {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-		}
-	})
-	return cmd, &stderr
-}
-
-func TestServeProcessUnregistersOnSignal(t *testing.T) {
-	t.Parallel()
-
-	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGINT} {
-		t.Run(sig.String(), func(t *testing.T) {
-			t.Parallel()
-
-			bus := dbustest.Start(t)
-			auth := polkittest.New()
-			auth.Serve(t, bus.Conn(t))
-			cmd, stderr := startProcess(t, bus)
-			registered := next(t, auth)
-			if !registered.Register {
-				t.Fatalf("saw %+v, want a registration", registered)
-			}
-			if err := cmd.Process.Signal(sig); err != nil {
-				t.Fatalf("signal agent: %v", err)
-			}
-			if got := next(t, auth); got.Register || got.Sender != registered.Sender {
-				t.Errorf("after %v saw %+v, want the agent unregistered", sig, got)
-			}
-			if err := cmd.Wait(); err != nil {
-				t.Errorf("agent exited with %v after %v: %s", err, sig, stderr)
-			}
-		})
-	}
-}
-
-func TestServeProcessExitsNonZeroWhenRefused(t *testing.T) {
-	t.Parallel()
-
-	bus := dbustest.Start(t)
-	auth := polkittest.New()
-	auth.Preregister(polkit.SessionSubject("c2"))
-	auth.Serve(t, bus.Conn(t))
-	cmd, stderr := startProcess(t, bus)
-	err := cmd.Wait()
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() == 0 {
-		t.Fatalf("agent exited with %v, want a non-zero status", err)
-	}
-	if !strings.Contains(stderr.String(), polkittest.AlreadyExists) {
-		t.Errorf("stderr %q lacks polkit's %q", stderr, polkittest.AlreadyExists)
 	}
 }

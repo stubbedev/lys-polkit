@@ -37,7 +37,8 @@ type Scenario string
 // The fake's scenarios.
 const (
 	// Answer prompts for the password and reports SUCCESS for Password,
-	// FAILURE for anything else.
+	// FAILURE for anything else. Every scenario's verdict is FAILURE for
+	// a user or cookie other than User and Cookie.
 	Answer Scenario = "answer"
 	// TwoPrompts asks for the user name, echoed, then the password.
 	TwoPrompts Scenario = "two-prompts"
@@ -48,6 +49,9 @@ const (
 	HangUp Scenario = "hang-up"
 	// Wait prompts and then waits until it is stopped.
 	Wait Scenario = "wait"
+	// InfoWait says to touch a fingerprint reader and waits until it is
+	// stopped.
+	InfoWait Scenario = "info-wait"
 )
 
 // The texts the fake shows.
@@ -234,23 +238,23 @@ func run(s Scenario) error {
 	if err != nil {
 		return fmt.Errorf("read cookie: %w", err)
 	}
-	if user != User || cookie != Cookie {
-		return say("FAILURE")
-	}
+	known := user == User && cookie == Cookie
 	switch s {
 	case Answer:
-		return verdict(ask(in, "PAM_PROMPT_ECHO_OFF", PasswordPrompt, Password))
+		ok, err := ask(in, "PAM_PROMPT_ECHO_OFF", PasswordPrompt, Password)
+		return verdict(known && ok, err)
 	case TwoPrompts:
 		name, err := ask(in, "PAM_PROMPT_ECHO_ON", UserPrompt, User)
 		if err != nil || !name {
 			return verdict(false, err)
 		}
-		return verdict(ask(in, "PAM_PROMPT_ECHO_OFF", PasswordPrompt, Password))
+		ok, err := ask(in, "PAM_PROMPT_ECHO_OFF", PasswordPrompt, Password)
+		return verdict(known && ok, err)
 	case InfoOnly:
 		if err := say("PAM_TEXT_INFO " + Escape(FingerInfo)); err != nil {
 			return err
 		}
-		return say("SUCCESS")
+		return verdict(known, nil)
 	case HangUp:
 		if _, err := ask(in, "PAM_PROMPT_ECHO_OFF", PasswordPrompt, Password); err != nil {
 			return err
@@ -258,6 +262,12 @@ func run(s Scenario) error {
 		return exitStatus(HangUpStatus)
 	case Wait:
 		if err := say("PAM_PROMPT_ECHO_OFF " + Escape(PasswordPrompt)); err != nil {
+			return err
+		}
+		_, _ = readLine(in)
+		return nil
+	case InfoWait:
+		if err := say("PAM_TEXT_INFO " + Escape(FingerInfo)); err != nil {
 			return err
 		}
 		_, _ = readLine(in)

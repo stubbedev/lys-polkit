@@ -19,7 +19,7 @@
         );
       };
 
-      vendorHash = "sha256-ceXDKM15thwq3MbzOj+0tWpmJFyHFo3QR0HpYPg6kRQ=";
+      vendorHash = "sha256-Dqsq1pS1CCK3LCtTmMkI/Lr3ZxyRJUlgvu5oyw81uiw=";
 
       nativeCheckInputs = [pkgs.dbus];
 

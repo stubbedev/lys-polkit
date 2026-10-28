@@ -37,7 +37,7 @@ type SessionRef struct {
 // one, else the user's display session. A user service runs outside any
 // session, so polkitd resolves it through the display session, and an
 // agent registering for any other session is refused.
-func Session(ctx context.Context, conn *dbus.Conn, pid uint32, uid int) (SessionID, error) {
+func Session(ctx context.Context, conn *dbus.Conn, pid, uid uint32) (SessionID, error) {
 	path, err := sessionPath(ctx, conn, pid, uid)
 	if err != nil {
 		return "", err
@@ -52,7 +52,7 @@ func Session(ctx context.Context, conn *dbus.Conn, pid uint32, uid int) (Session
 	return id, nil
 }
 
-func sessionPath(ctx context.Context, conn *dbus.Conn, pid uint32, uid int) (dbus.ObjectPath, error) {
+func sessionPath(ctx context.Context, conn *dbus.Conn, pid, uid uint32) (dbus.ObjectPath, error) {
 	var own dbus.ObjectPath
 	err := conn.Object(BusName, ManagerPath).CallWithContext(ctx, ManagerIface+".GetSessionByPID", 0, pid).Store(&own)
 	if err == nil {
