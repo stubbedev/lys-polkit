@@ -22,8 +22,8 @@ in {
     home.packages = [cfg.package];
 
     xdg.configFile = {
-      "systemd/user/${unit}".source = "${cfg.package}/share/systemd/user/${unit}";
-      "systemd/user/graphical-session.target.wants/${unit}".source = "${cfg.package}/share/systemd/user/${unit}";
+      "systemd/user/${unit}".source = "${cfg.package}/lib/systemd/user/${unit}";
+      "systemd/user/graphical-session.target.wants/${unit}".source = "${cfg.package}/lib/systemd/user/${unit}";
     };
   };
 }

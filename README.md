@@ -62,11 +62,12 @@ The flake exports a home-manager module:
 
 It installs the package and the `lys-polkit.service` user unit, wanted by
 `graphical-session.target`. On NixOS, `security.polkit.enable = true`
-provides polkitd and the setuid helper at
-`/run/wrappers/bin/polkit-agent-helper-1`, which the package is built for.
-The same module works on another distribution with home-manager: polkit
-127's helper socket is used there, and an older polkit's helper path is set
-with `services.lys-polkit.package = lys-polkit.packages.${system}.default.override
+provides polkitd and polkit 127's helper socket, which lys-polkit uses; the
+setuid path the package names, `/run/wrappers/bin/polkit-agent-helper-1`,
+only matters for a polkit without the socket. The same module works on
+another distribution with home-manager: polkit 127's helper socket is used
+there too, and an older polkit's helper path is set with
+`services.lys-polkit.package = lys-polkit.packages.${system}.default.override
 { helperProgram = "/usr/lib/polkit-1/polkit-agent-helper-1"; };`.
 
 ### Another distribution, without nix
@@ -119,9 +120,13 @@ patched godbus and `dbusx`; the dialogs' contract is lys-lib's
 ## Nix
 
 - `nix build` builds the package with the user unit in
-  `share/systemd/user` (`nix/lys-polkit.nix`; `vendorHash` follows go.sum)
+  `lib/systemd/user` (`nix/lys-polkit.nix`; `vendorHash` follows go.sum)
 - `nix flake check` evaluates the home-manager module and checks the unit
-  is wired to the graphical session
+  is wired to the graphical session, and on x86_64 (with KVM) runs
+  `tests/polkit-vm.nix`: a NixOS VM where a real polkit 127 authenticates
+  `pkexec` through lys-polkit, with `internal/vmtest/fakedialogs` answering
+  for lys-shell's dialogs from a script (right password, a wrong one then
+  the right one, cancel, and no agent once lys-polkit stops)
 - `nix fmt` formats the nix files with alejandra
 
 ## CI

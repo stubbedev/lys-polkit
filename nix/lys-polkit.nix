@@ -4,9 +4,6 @@
   dbus,
   version,
   src,
-  # The setuid polkit-agent-helper-1 the agent runs where polkit has no
-  # helper socket: NixOS's security wrapper. Debian and Ubuntu install
-  # it as /usr/lib/polkit-1/polkit-agent-helper-1.
   helperProgram ? "/run/wrappers/bin/polkit-agent-helper-1",
 }:
 buildGo127Module {
@@ -14,6 +11,8 @@ buildGo127Module {
   inherit version src;
 
   vendorHash = "sha256-Dqsq1pS1CCK3LCtTmMkI/Lr3ZxyRJUlgvu5oyw81uiw=";
+
+  subPackages = ["."];
 
   env.CGO_ENABLED = 0;
 
@@ -27,8 +26,8 @@ buildGo127Module {
   doCheck = true;
 
   postInstall = ''
-    install -Dm644 dist/lys-polkit.service.in $out/share/systemd/user/lys-polkit.service
-    substituteInPlace $out/share/systemd/user/lys-polkit.service --replace-fail @bindir@ $out/bin
+    install -Dm644 dist/lys-polkit.service.in $out/lib/systemd/user/lys-polkit.service
+    substituteInPlace $out/lib/systemd/user/lys-polkit.service --replace-fail @bindir@ $out/bin
   '';
 
   doInstallCheck = true;
@@ -36,7 +35,7 @@ buildGo127Module {
     runHook preInstallCheck
     $out/bin/lys-polkit --version | grep -qxF "lys-polkit ${version}"
     strings $out/bin/lys-polkit | grep -qF ${helperProgram}
-    grep -qxF "ExecStart=$out/bin/lys-polkit" $out/share/systemd/user/lys-polkit.service
+    grep -qxF "ExecStart=$out/bin/lys-polkit" $out/lib/systemd/user/lys-polkit.service
     runHook postInstallCheck
   '';
 

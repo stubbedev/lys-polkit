@@ -27,17 +27,32 @@
     unit = files."systemd/user/lys-polkit.service".source;
     wants = files."systemd/user/graphical-session.target.wants/lys-polkit.service".source;
   in {
-    checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-      lys-polkit-hm-module = pkgs.runCommand "lys-polkit-hm-module" {} ''
-        grep -qxF "PartOf=graphical-session.target" ${unit}
-        grep -qxF "After=graphical-session.target" ${unit}
-        grep -qxF "WantedBy=graphical-session.target" ${unit}
-        grep -qxF "Restart=on-failure" ${unit}
-        grep -qxF "ExecStart=${lib.getExe pkg}" ${unit}
-        [ "${wants}" = "${unit}" ]
-        ${lib.optionalString (!lib.elem pkg home.config.home.packages) "echo 'lys-polkit is not in home.packages' >&2; exit 1"}
-        touch $out
-      '';
-    };
+    checks =
+      lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 {
+        lys-polkit-vm = pkgs.callPackage ../tests/polkit-vm.nix {
+          lys-polkit = pkg;
+          fakedialogs = pkg.overrideAttrs (old: {
+            pname = "lys-polkit-fakedialogs";
+            subPackages = ["internal/vmtest/fakedialogs"];
+            ldflags = [];
+            doCheck = false;
+            postInstall = "";
+            doInstallCheck = false;
+            meta = old.meta // {mainProgram = "fakedialogs";};
+          });
+        };
+      }
+      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        lys-polkit-hm-module = pkgs.runCommand "lys-polkit-hm-module" {} ''
+          grep -qxF "PartOf=graphical-session.target" ${unit}
+          grep -qxF "After=graphical-session.target" ${unit}
+          grep -qxF "WantedBy=graphical-session.target" ${unit}
+          grep -qxF "Restart=on-failure" ${unit}
+          grep -qxF "ExecStart=${lib.getExe pkg}" ${unit}
+          [ "${wants}" = "${unit}" ]
+          ${lib.optionalString (!lib.elem pkg home.config.home.packages) "echo 'lys-polkit is not in home.packages' >&2; exit 1"}
+          touch $out
+        '';
+      };
   };
 }
