@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -127,10 +128,13 @@ func (s *Session) read() {
 			s.end(Failure{Cause: err})
 			return
 		}
-		switch ev.(type) {
+		switch ev := ev.(type) {
 		case Success, Failure:
 			s.end(ev)
 			return
+		case Diagnostic:
+			slog.Warn("polkit agent helper", "message", ev.Text)
+			continue
 		}
 		if !s.send(ev) {
 			_ = s.link.finish()

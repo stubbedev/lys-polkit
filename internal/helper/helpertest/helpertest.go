@@ -101,8 +101,8 @@ func (f *Fake) Setuid() helper.Transport {
 }
 
 // Socket is the transport that reaches the fake on a socket, which
-// runs one fake per connection with the connection as its stdin and
-// stdout, as systemd's Accept=yes socket does. The program is one that
+// runs one fake per connection with the connection as its stdin,
+// stdout and stderr, as polkit 127's Accept=yes socket unit does. The program is one that
 // cannot run, so a fall back to it fails.
 func (f *Fake) Socket(t testing.TB) helper.Transport {
 	t.Helper()
@@ -143,7 +143,7 @@ func (f *Fake) serve(t testing.TB, conn *net.UnixConn) {
 	}
 	defer file.Close()
 	cmd := exec.Command(f.program, socketArg) //nolint:gosec // the test binary under the fake's name
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = file, file, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = file, file, file
 	if err := cmd.Start(); err != nil {
 		t.Errorf("helpertest: start socket helper: %v", err)
 		return
@@ -310,6 +310,7 @@ func verdict(ok bool, err error) error {
 		if err := say("PAM_ERROR_MSG " + Escape(SorryError)); err != nil {
 			return err
 		}
+		fmt.Fprintln(os.Stderr, "polkit-agent-helper-1: pam_authenticate failed: Authentication failure")
 		return say("FAILURE")
 	}
 	return say("SUCCESS")

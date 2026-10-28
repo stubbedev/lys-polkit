@@ -29,6 +29,8 @@ func TestParseLine(t *testing.T) {
 		{line: `PAM_TEXT_INFO \18`, want: helper.Info{Text: "\x018"}},
 		{line: `PAM_TEXT_INFO \1234`, want: helper.Info{Text: "S4"}},
 		{line: `PAM_TEXT_INFO \q`, want: helper.Info{Text: "q"}},
+		{line: "polkit-agent-helper-1: pam_authenticate failed: Authentication failure", want: helper.Diagnostic{Text: "pam_authenticate failed: Authentication failure"}},
+		{line: `polkit-agent-helper-1: raw \n`, want: helper.Diagnostic{Text: `raw \n`}},
 		{line: "SUCCESS", want: helper.Success{}},
 		{line: "FAILURE", want: helper.Failure{}},
 	}

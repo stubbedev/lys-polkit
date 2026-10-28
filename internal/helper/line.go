@@ -10,7 +10,8 @@ import (
 )
 
 // Event is one line of the helper's conversation: Prompt, Info, Error,
-// Success or Failure.
+// Success or Failure, or a Diagnostic, which a Session logs instead of
+// delivering.
 type Event interface{ event() }
 
 // Prompt asks for one answer, shown as typed when Echo is set.
@@ -34,11 +35,18 @@ type Success struct{}
 // when the helper said FAILURE, else why it ended without a verdict.
 type Failure struct{ Cause error }
 
-func (Prompt) event()  {}
-func (Info) event()    {}
-func (Error) event()   {}
-func (Success) event() {}
-func (Failure) event() {}
+// Diagnostic is a message the helper wrote to stderr, such as
+// "pam_authenticate failed: Authentication failure". polkit 127's
+// socket-activated helper unit leaves stderr on the socket, so these
+// arrive among the protocol lines.
+type Diagnostic struct{ Text string }
+
+func (Prompt) event()     {}
+func (Diagnostic) event() {}
+func (Info) event()       {}
+func (Error) event()      {}
+func (Success) event()    {}
+func (Failure) event()    {}
 
 func (f Failure) String() string {
 	if f.Cause == nil {
@@ -53,6 +61,7 @@ const (
 	promptEchoOn  = "PAM_PROMPT_ECHO_ON "
 	errorMsg      = "PAM_ERROR_MSG "
 	textInfo      = "PAM_TEXT_INFO "
+	diagnostic    = "polkit-agent-helper-1: "
 	success       = "SUCCESS"
 	failure       = "FAILURE"
 )
@@ -77,6 +86,9 @@ func ParseLine(line string) (Event, error) {
 		return Success{}, nil
 	case failure:
 		return Failure{}, nil
+	}
+	if text, ok := strings.CutPrefix(line, diagnostic); ok {
+		return Diagnostic{Text: text}, nil
 	}
 	for _, k := range lineKinds {
 		escaped, ok := strings.CutPrefix(line, k.prefix)
