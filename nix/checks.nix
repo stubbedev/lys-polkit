@@ -42,7 +42,7 @@
           });
         };
       }
-      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+      // {
         lys-polkit-hm-module = pkgs.runCommand "lys-polkit-hm-module" {} ''
           grep -qxF "PartOf=graphical-session.target" ${unit}
           grep -qxF "After=graphical-session.target" ${unit}
