@@ -1,4 +1,4 @@
-github.com/stubbedev/lys-lib v0.1.1-0.20261101124604-ea83b142dd20 h1:cBGIDM3uScpP2ifADFNtHREpSn57npY3lwC0RhiyOTc=
-github.com/stubbedev/lys-lib v0.1.1-0.20261101124604-ea83b142dd20/go.mod h1:yjWH0F8C29GsFVdmpvaHok8QzEdaovEtBOeP7LAKErw=
+github.com/stubbedev/lys-lib v0.1.1-0.20261101160543-71c054b74097 h1:Uou/IkQpv/jDeJfhR4ujo+6oOx87vO6p+qH5pHptvkU=
+github.com/stubbedev/lys-lib v0.1.1-0.20261101160543-71c054b74097/go.mod h1:9cwFf6CfWvW6BfD3/IMPomdtw5ajj5KKgS6Xbd7MYHI=
 golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
 golang.org/x/sys v0.49.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
