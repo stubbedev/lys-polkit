@@ -26,3 +26,7 @@ build:
 # Format every Go source in place with gofmt.
 fmt:
     gofmt -w .
+
+# Set nix/lys-polkit.nix's vendorHash to the hash of the modules go.sum pins.
+vendor-hash:
+    nix run github:stubbedev/lys-ci#vendor-hash -- nix/lys-polkit.nix .#default.goModules
