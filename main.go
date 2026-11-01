@@ -12,6 +12,7 @@ import (
 	"os/user"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/stubbedev/lys-lib/intconv"
@@ -24,10 +25,12 @@ import (
 	"github.com/stubbedev/lys-polkit/internal/polkit"
 )
 
-// helperProgram is the setuid polkit-agent-helper-1, used where polkit
-// has no helper socket; the build sets it for its platform with
-// -ldflags -X.
-var helperProgram = "/usr/lib/polkit-1/polkit-agent-helper-1"
+// helperPrograms is where the setuid polkit-agent-helper-1 can be,
+// colon-separated, used where polkit has no helper socket: polkit's
+// own path under /usr and the NixOS wrapper. The host decides which
+// one exists, not the build, so one binary works on both. A packager
+// with another path sets it with -ldflags -X.
+var helperPrograms = "/usr/lib/polkit-1/polkit-agent-helper-1:/run/wrappers/bin/polkit-agent-helper-1"
 
 // version is the release the build names with -ldflags -X; without one
 // it is the module version Go recorded.
@@ -141,7 +144,7 @@ func run(ctx context.Context) error {
 	}
 	a := agent.New(agent.Config{
 		Dialogs:     portaldialogs.NewClient(session),
-		Transport:   helper.Transport{Socket: helper.SocketPath, Program: helperProgram},
+		Transport:   helper.Transport{Socket: helper.SocketPath, Programs: strings.Split(helperPrograms, ":")},
 		UserName:    userName,
 		SessionUser: polkit.UID(uid),
 	})

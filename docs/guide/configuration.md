@@ -12,21 +12,13 @@ its dialogs by itself, so there is little to set.
 
 ## Build-time values
 
-The helper path and the version are set when the binary is built, with
+The helper paths and the version are set when the binary is built, with
 `-ldflags -X`.
 
 | Variable | Default | What it is |
 | --- | --- | --- |
-| `main.helperProgram` | `/usr/lib/polkit-1/polkit-agent-helper-1`, or `/run/wrappers/bin/polkit-agent-helper-1` in the nix package | The setuid helper, used only when [the helper socket](./how-it-works#supported-polkit) does not exist |
+| `main.helperPrograms` | `/usr/lib/polkit-1/polkit-agent-helper-1:/run/wrappers/bin/polkit-agent-helper-1` | Where the setuid helper can be, colon-separated; the first that exists runs, and only when [the helper socket](./how-it-works#supported-polkit) does not exist |
 | `main.version` | The module version Go recorded | What `--version` prints |
-
-To set the helper path with home-manager, override the package:
-
-```nix
-services.lys-polkit.package = inputs.lys-polkit.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
-  helperProgram = "/usr/lib/polkit-1/polkit-agent-helper-1";
-};
-```
 
 ## Command line
 

@@ -4,7 +4,6 @@
   dbus,
   version,
   src,
-  helperProgram ? "/run/wrappers/bin/polkit-agent-helper-1",
 }:
 buildGo127Module {
   pname = "lys-polkit";
@@ -19,7 +18,6 @@ buildGo127Module {
   ldflags = [
     "-s"
     "-X main.version=${version}"
-    "-X main.helperProgram=${helperProgram}"
   ];
 
   nativeCheckInputs = [dbus];
@@ -34,7 +32,6 @@ buildGo127Module {
   installCheckPhase = ''
     runHook preInstallCheck
     $out/bin/lys-polkit --version | grep -qxF "lys-polkit ${version}"
-    strings $out/bin/lys-polkit | grep -qF ${helperProgram}
     grep -qxF "ExecStart=$out/bin/lys-polkit" $out/lib/systemd/user/lys-polkit.service
     runHook postInstallCheck
   '';

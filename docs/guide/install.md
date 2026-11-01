@@ -25,19 +25,18 @@ It installs the package and the `lys-polkit.service` user unit, wanted by
 
 On NixOS, `security.polkit.enable = true` provides polkitd and polkit 127's
 helper socket, which lys-polkit uses. On another distribution polkit 127's
-socket is used too. An older polkit needs its
-[helper path](./configuration#build-time-values) set.
+socket is used too, and an older polkit's setuid helper is found at
+`/usr/lib/polkit-1/polkit-agent-helper-1`.
 
 ## Without nix
 
-You need the Go version `go.mod` declares. Build with your distribution's
-helper path (Debian and Ubuntu shown), install the binary and the user unit,
-and enable it for the graphical session:
+You need the Go version `go.mod` declares. Build, install the binary and the
+user unit, and enable it for the graphical session:
 
 ```sh
 git clone https://github.com/stubbedev/lys-polkit
 cd lys-polkit
-go build -ldflags "-X main.version=$(git describe --always) -X main.helperProgram=/usr/lib/polkit-1/polkit-agent-helper-1" -o lys-polkit .
+go build -ldflags "-X main.version=$(git describe --always)" -o lys-polkit .
 install -Dm755 lys-polkit ~/.local/bin/lys-polkit
 mkdir -p ~/.config/systemd/user
 sed "s|@bindir@|$HOME/.local/bin|" dist/lys-polkit.service.in > ~/.config/systemd/user/lys-polkit.service

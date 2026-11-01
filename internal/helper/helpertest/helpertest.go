@@ -99,7 +99,7 @@ func New(t testing.TB, s Scenario) *Fake {
 // socket exists at a path short enough for a socket address, so dialing
 // it finds nothing rather than refusing an overlong address.
 func (f *Fake) Setuid() helper.Transport {
-	return helper.Transport{Socket: f.absent, Program: f.program}
+	return helper.Transport{Socket: f.absent, Programs: []string{f.program}}
 }
 
 // Socket is the transport that reaches the fake on a socket, which
@@ -133,7 +133,7 @@ func (f *Fake) Socket(t testing.TB) helper.Transport {
 			wg.Go(func() { f.serve(t, unix) })
 		}
 	})
-	return helper.Transport{Socket: path, Program: filepath.Join(f.dir, "no-program")}
+	return helper.Transport{Socket: path, Programs: []string{filepath.Join(f.dir, "no-program")}}
 }
 
 func (f *Fake) serve(t testing.TB, conn *net.UnixConn) {

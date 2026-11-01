@@ -55,8 +55,11 @@ the way polkit 127 does:
   the only way). A socket that exists but refuses the connection fails the
   attempt rather than falling back, since a fallback would hide the broken
   socket.
-- otherwise by running the setuid `polkit-agent-helper-1` at
-  [the path the build names](./configuration#build-time-values), which is how
-  older polkit releases work.
+- otherwise by running the setuid `polkit-agent-helper-1`, which is how older
+  polkit releases work: polkit's own `/usr/lib/polkit-1/polkit-agent-helper-1`,
+  or the `/run/wrappers/bin/polkit-agent-helper-1` wrapper of a NixOS whose
+  polkit module defines one (those up to 25.11 do; current unstable only has the
+  socket). The first that exists runs, so one binary serves both, and
+  [a build can name others](./configuration#build-time-values).
 
 Messages from the helper's stderr go to lys-polkit's log, not to the dialog.

@@ -178,7 +178,7 @@ func TestStartWithABrokenSocketDoesNotFallBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := helper.Start(t.Context(), helper.Transport{Socket: path, Program: fake.Setuid().Program}, helpertest.User, helpertest.Cookie)
+	s, err := helper.Start(t.Context(), helper.Transport{Socket: path, Programs: fake.Setuid().Programs}, helpertest.User, helpertest.Cookie)
 	if err == nil || !strings.Contains(err.Error(), "connect to helper socket "+path) {
 		if s != nil {
 			s.Cancel()
@@ -187,6 +187,51 @@ func TestStartWithABrokenSocketDoesNotFallBack(t *testing.T) {
 	}
 	if n := fake.Started(t); n != 0 {
 		t.Errorf("%d setuid helpers started, want none", n)
+	}
+}
+
+func TestProgramsRunsTheFirstThatExists(t *testing.T) {
+	t.Parallel()
+
+	fake := helpertest.New(t, helpertest.Answer)
+	tr := fake.Setuid()
+	tr.Programs = append([]string{filepath.Join(t.TempDir(), "absent")}, tr.Programs...)
+	s := start(t, tr)
+	if ev, want := next(t, s), (helper.Prompt{Text: helpertest.PasswordPrompt}); !reflect.DeepEqual(ev, want) {
+		t.Fatalf("first event = %#v, want %#v", ev, want)
+	}
+}
+
+func TestProgramsNameEveryPathWhenNoneExists(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	first, second := filepath.Join(dir, "first"), filepath.Join(dir, "second")
+	_, err := helper.Start(t.Context(), helper.Transport{Socket: filepath.Join(sockdir.Dir(t), "none"), Programs: []string{first, second}}, helpertest.User, helpertest.Cookie)
+	if err == nil || !strings.Contains(err.Error(), first) || !strings.Contains(err.Error(), second) {
+		t.Fatalf("Start = %v, want an error naming %s and %s", err, first, second)
+	}
+}
+
+func TestProgramThatCannotRunFailsTheAttempt(t *testing.T) {
+	t.Parallel()
+
+	fake := helpertest.New(t, helpertest.Answer)
+	broken := filepath.Join(t.TempDir(), "not-executable")
+	if err := os.WriteFile(broken, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tr := fake.Setuid()
+	tr.Programs = append([]string{broken}, tr.Programs...)
+	s, err := helper.Start(t.Context(), tr, helpertest.User, helpertest.Cookie)
+	if err == nil || !strings.Contains(err.Error(), broken) {
+		if s != nil {
+			s.Cancel()
+		}
+		t.Fatalf("Start = %v, want an error naming %s", err, broken)
+	}
+	if n := fake.Started(t); n != 0 {
+		t.Errorf("%d later helpers started, want none", n)
 	}
 }
 
@@ -200,7 +245,7 @@ func TestStartRefuses(t *testing.T) {
 		user, cookie string
 		want         string
 	}{
-		{name: "no socket and no program", tr: helper.Transport{Socket: filepath.Join(sockdir.Dir(t), "none"), Program: filepath.Join(t.TempDir(), "none")}, user: helpertest.User, cookie: helpertest.Cookie, want: "start helper"},
+		{name: "no socket and no program", tr: helper.Transport{Socket: filepath.Join(sockdir.Dir(t), "none"), Programs: []string{filepath.Join(t.TempDir(), "none")}}, user: helpertest.User, cookie: helpertest.Cookie, want: "start helper"},
 		{name: "a user over two lines", tr: fake.Setuid(), user: "alice\nroot", cookie: helpertest.Cookie, want: "single lines"},
 		{name: "a cookie over two lines", tr: fake.Setuid(), user: helpertest.User, cookie: "a\nb", want: "single lines"},
 		{name: "no user", tr: fake.Setuid(), user: "", cookie: helpertest.Cookie, want: "non-empty"},

@@ -20,13 +20,13 @@ import (
 const SocketPath = "/run/polkit/agent-helper.socket"
 
 // Transport is where the helper is found: Socket is tried first, and
-// only when nothing exists at it is Program, the setuid
-// polkit-agent-helper-1, run instead. A socket that exists but refuses
-// the connection fails the attempt: falling back to a setuid helper
-// polkit has moved away from would hide the broken socket.
+// only when nothing exists at it is the first of Programs that exists,
+// the setuid polkit-agent-helper-1, run instead. A socket that exists
+// but refuses the connection fails the attempt, as does a program that
+// exists but cannot run: falling back would hide what is broken.
 type Transport struct {
-	Socket  string
-	Program string
+	Socket   string
+	Programs []string
 }
 
 // link is the conversation's channel to one helper.
@@ -83,7 +83,7 @@ func dial(ctx context.Context, t Transport, user string) (link, error) {
 		}
 		return s, nil
 	case errors.Is(err, syscall.ENOENT):
-		return spawn(t.Program, user)
+		return spawnFirst(t.Programs, user)
 	default:
 		return nil, fmt.Errorf("connect to helper socket %s: %w", t.Socket, err)
 	}
@@ -195,6 +195,17 @@ type processLink struct {
 	stdout io.ReadCloser
 	wait   sync.Once
 	exit   error
+}
+
+func spawnFirst(programs []string, user string) (*processLink, error) {
+	for _, program := range programs {
+		l, err := spawn(program, user)
+		if errors.Is(err, syscall.ENOENT) {
+			continue
+		}
+		return l, err
+	}
+	return nil, fmt.Errorf("start helper: no helper socket and none of %q exists", programs)
 }
 
 func spawn(program, user string) (*processLink, error) {

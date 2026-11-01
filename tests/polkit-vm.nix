@@ -12,6 +12,12 @@ pkgs.testers.runNixOSTest {
       enablePkexecWrapper = true;
       extraArgs = ["--no-debug" "--log-level=info"];
     };
+    security.wrappers.polkit-agent-helper-1 = {
+      setuid = true;
+      owner = "root";
+      group = "root";
+      source = "${pkgs.lib.getLib pkgs.polkit}/lib/polkit-1/polkit-agent-helper-1";
+    };
     users.users.alice = {
       isNormalUser = true;
       password = "hunter2";
@@ -51,6 +57,13 @@ pkgs.testers.runNixOSTest {
         script("cancel")
         status, out = pkexec()
         assert status == 126, f"pkexec exited {status}: {out}"
+
+    with subtest("without the helper socket the setuid helper authorizes"):
+        machine.succeed("systemctl stop polkit-agent-helper.socket && ! test -e /run/polkit/agent-helper.socket")
+        script("answer hunter2")
+        status, out = pkexec()
+        machine.succeed("systemctl start polkit-agent-helper.socket")
+        assert status == 0, f"pkexec exited {status}: {out}"
 
     with subtest("with lys-polkit stopped pkexec finds no agent"):
         machine.succeed("systemctl --user --machine=alice@ stop lys-polkit.service")
