@@ -2,7 +2,15 @@
   pkgs,
   lys-polkit,
   fakedialogs,
-}:
+}: let
+  directoryUID = 1500;
+  directoryUser = builtins.toJSON {
+    userName = "carol";
+    uid = directoryUID;
+    gid = directoryUID;
+    disposition = "regular";
+  };
+in
 pkgs.testers.runNixOSTest {
   name = "lys-polkit";
 
@@ -11,6 +19,7 @@ pkgs.testers.runNixOSTest {
       enable = true;
       enablePkexecWrapper = true;
       extraArgs = ["--no-debug" "--log-level=info"];
+      adminIdentities = ["unix-user:carol" "unix-group:wheel"];
     };
     security.wrappers.polkit-agent-helper-1 = {
       setuid = true;
@@ -23,6 +32,8 @@ pkgs.testers.runNixOSTest {
       password = "hunter2";
       extraGroups = ["wheel"];
     };
+    environment.etc."userdb/carol.user".text = directoryUser;
+    environment.etc."userdb/${toString directoryUID}.user".text = directoryUser;
     services.getty.autologinUser = "alice";
     systemd.packages = [lys-polkit];
     systemd.user.services.fakedialogs.serviceConfig.ExecStart = "${pkgs.lib.getExe fakedialogs} -script /tmp/vm/script -log /tmp/vm/log";
@@ -46,6 +57,11 @@ pkgs.testers.runNixOSTest {
         script("answer hunter2")
         status, out = pkexec()
         assert status == 0, f"pkexec exited {status}: {out}"
+
+    with subtest("a user only the name service knows is offered by name"):
+        machine.fail("grep -q '^carol:' /etc/passwd")
+        machine.succeed("getent passwd ${toString directoryUID} | grep -q '^carol:'")
+        machine.succeed("grep -q 'identities=[^ ]*carol' /tmp/vm/log")
 
     with subtest("a wrong password, then the right one, authorizes"):
         script("answer wrong", "answer hunter2")

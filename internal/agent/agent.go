@@ -41,7 +41,7 @@ type Config struct {
 	Dialogs   Dialogs
 	Transport helper.Transport
 	// UserName is the login name of a uid, which the helper is given.
-	UserName func(polkit.UID) (string, error)
+	UserName func(context.Context, polkit.UID) (string, error)
 	// SessionUser is the uid of the session's user, the identity chosen
 	// first when it is offered.
 	SessionUser polkit.UID
@@ -113,7 +113,10 @@ func (a *Agent) BeginAuthentication(_, message, iconName string, details map[str
 		caller: portaldialogs.Caller{Handle: j.handle, Modal: true},
 		base:   portaldialogs.AuthRequest{Message: message, Icon: iconName, Details: detailLines(shown)},
 	}
-	if err := c.identities(uids); err != nil {
+	if err := c.identities(j.ctx, uids); err != nil {
+		if j.ctx.Err() != nil {
+			return cancelled
+		}
 		return failed("%v", err)
 	}
 	return c.run(j.ctx)
@@ -201,12 +204,12 @@ type conversation struct {
 	names  map[polkit.UID]string
 }
 
-func (c *conversation) identities(uids []polkit.UID) error {
+func (c *conversation) identities(ctx context.Context, uids []polkit.UID) error {
 	c.names = make(map[polkit.UID]string, len(uids))
 	c.base.Identities = make([]portaldialogs.AuthIdentity, 0, len(uids))
 	c.base.Selected = uint32(uids[0])
 	for _, uid := range uids {
-		name, err := c.cfg.UserName(uid)
+		name, err := c.cfg.UserName(ctx, uid)
 		if err != nil {
 			return fmt.Errorf("identity uid %d: %w", uid, err)
 		}

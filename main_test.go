@@ -114,10 +114,10 @@ func TestExitsNonZeroWhenRefused(t *testing.T) {
 func TestUserName(t *testing.T) {
 	t.Parallel()
 
-	if name, err := userName(0); err != nil || name != "root" {
+	if name, err := userName(t.Context(), 0); err != nil || name != "root" {
 		t.Errorf("userName(0) = %q, %v; want root", name, err)
 	}
-	if _, err := userName(4294967294); err == nil {
+	if _, err := userName(t.Context(), 4294967294); err == nil {
 		t.Error("userName found a user for uid 4294967294")
 	}
 }

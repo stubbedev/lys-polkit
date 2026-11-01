@@ -9,9 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"os/user"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -22,6 +20,7 @@ import (
 	"github.com/stubbedev/lys-polkit/internal/agent"
 	"github.com/stubbedev/lys-polkit/internal/helper"
 	"github.com/stubbedev/lys-polkit/internal/logind"
+	"github.com/stubbedev/lys-polkit/internal/passwd"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
 )
 
@@ -152,10 +151,6 @@ func run(ctx context.Context) error {
 	return polkit.Serve(ctx, system, polkit.Registration{Subject: polkit.SessionSubject(id), Locale: polkit.Locale(os.Getenv)}, a)
 }
 
-func userName(uid polkit.UID) (string, error) {
-	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
-	if err != nil {
-		return "", fmt.Errorf("look up uid %d: %w", uid, err)
-	}
-	return u.Username, nil
+func userName(ctx context.Context, uid polkit.UID) (string, error) {
+	return passwd.Name(ctx, uint32(uid))
 }

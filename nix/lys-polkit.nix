@@ -2,6 +2,7 @@
   lib,
   buildGo127Module,
   dbus,
+  getent,
   version,
   src,
 }:
@@ -20,7 +21,7 @@ buildGo127Module {
     "-X main.version=${version}"
   ];
 
-  nativeCheckInputs = [dbus];
+  nativeCheckInputs = [dbus getent];
   doCheck = true;
 
   postInstall = ''

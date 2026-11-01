@@ -1,6 +1,7 @@
 package agent_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -32,7 +33,7 @@ const (
 
 var names = map[polkit.UID]string{bob: "bob", alice: helpertest.User}
 
-func userName(uid polkit.UID) (string, error) {
+func userName(_ context.Context, uid polkit.UID) (string, error) {
 	if name, ok := names[uid]; ok {
 		return name, nil
 	}
@@ -86,6 +87,7 @@ type setup struct {
 	scenario    helpertest.Scenario
 	sessionUser polkit.UID
 	noDialogs   bool
+	userName    func(context.Context, polkit.UID) (string, error)
 }
 
 func start(t *testing.T, s setup) *env {
@@ -101,10 +103,14 @@ func start(t *testing.T, s setup) *env {
 	}
 	fake := helpertest.New(t, s.scenario)
 	agentConn := bus.Conn(t)
+	lookup := s.userName
+	if lookup == nil {
+		lookup = userName
+	}
 	a := agent.New(agent.Config{
 		Dialogs:     portaldialogs.NewClient(agentConn),
 		Transport:   fake.Setuid(),
-		UserName:    userName,
+		UserName:    lookup,
 		SessionUser: s.sessionUser,
 	})
 	t.Cleanup(a.Close)
@@ -311,6 +317,30 @@ func TestUserCancelWhileNoPromptWaits(t *testing.T) {
 	wantError(t, result(t, done), polkit.ErrCancelled, "cancelled")
 	e.expect("Dismiss")
 	e.fake.AssertNoneLeft(t)
+}
+
+func TestCancelAuthenticationDuringUserLookup(t *testing.T) {
+	t.Parallel()
+
+	looking := make(chan struct{})
+	e := start(t, setup{scenario: helpertest.Answer, sessionUser: alice, userName: func(ctx context.Context, _ polkit.UID) (string, error) {
+		close(looking)
+		<-ctx.Done()
+		return "", ctx.Err()
+	}})
+	done := e.begin("cookie-1", unixUser(alice))
+	select {
+	case <-looking:
+	case <-time.After(timeout):
+		t.Fatal("the user lookup never started")
+	}
+	if err := e.cancel("cookie-1"); err != nil {
+		t.Fatalf("CancelAuthentication: %v", err)
+	}
+	wantError(t, result(t, done), polkit.ErrCancelled, "cancelled")
+	if n := e.fake.Started(t); n != 0 {
+		t.Errorf("%d helpers started, want none", n)
+	}
 }
 
 func TestCancelAuthenticationRunning(t *testing.T) {

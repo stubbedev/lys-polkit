@@ -40,10 +40,12 @@ can switch to another.
 Only `unix-user` identities are accepted: polkit 127 expands admin groups into
 users before it asks an agent.
 
-Each identity's login name is looked up before the dialog opens, and one that
-cannot be found fails the request. The nix package is built with
-`CGO_ENABLED=0`, where Go's lookup reads `/etc/passwd` only, so users that exist
-only through another NSS source such as LDAP are not found.
+Each identity's login name is looked up with `getent passwd` before the dialog
+opens, and one that cannot be found fails the request. That goes through the
+system's own name service, so users from any `nsswitch.conf` source count, such
+as LDAP, SSSD or systemd's userdb, in a binary built without cgo. `getent` has
+to be on the service's `PATH`, which it is with glibc and with musl's utilities.
+A lookup that takes more than ten seconds fails.
 
 ## Supported polkit
 

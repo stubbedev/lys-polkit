@@ -80,7 +80,11 @@ func (h *host) Authenticate(c portaldialogs.Caller, r portaldialogs.AuthRequest)
 	n := h.prompts[c.Handle]
 	h.prompts[c.Handle] = n + 1
 	h.mu.Unlock()
-	h.logf("authenticate handle=%s selected=%d prompt=%q notes=%s", c.Handle, r.Selected, r.Prompt, notes(r.Notes))
+	names := make([]string, 0, len(r.Identities))
+	for _, id := range r.Identities {
+		names = append(names, id.Name)
+	}
+	h.logf("authenticate handle=%s selected=%d identities=%s prompt=%q notes=%s", c.Handle, r.Selected, strings.Join(names, ","), r.Prompt, notes(r.Notes))
 	reply, err := h.reply(n)
 	if err != nil {
 		h.logf("script: %v; cancelling", err)
