@@ -147,9 +147,7 @@ var changedMatch = []dbus.MatchOption{
 // registration (polkitd's own activation by it), one after it is a
 // polkitd that has not seen the agent.
 func register(ctx context.Context, conn *dbus.Conn, r Registration) (dbus.Sequence, error) {
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
-	call := authority(conn).CallWithContext(ctx, AuthorityIface+".RegisterAuthenticationAgent", 0, r.Subject, r.Locale, string(AgentPath))
+	call := callAuthority(ctx, conn, "RegisterAuthenticationAgent", r.Subject, r.Locale, string(AgentPath))
 	if call.Err != nil {
 		return dbus.NoSequence, fmt.Errorf("register polkit agent for %s: %w", r.Subject, call.Err)
 	}
@@ -157,14 +155,14 @@ func register(ctx context.Context, conn *dbus.Conn, r Registration) (dbus.Sequen
 }
 
 func unregister(ctx context.Context, conn *dbus.Conn, subject Subject) error {
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
-	if err := authority(conn).CallWithContext(ctx, AuthorityIface+".UnregisterAuthenticationAgent", 0, subject, string(AgentPath)).Err; err != nil {
+	if err := callAuthority(ctx, conn, "UnregisterAuthenticationAgent", subject, string(AgentPath)).Err; err != nil {
 		return fmt.Errorf("unregister polkit agent for %s: %w", subject, err)
 	}
 	return nil
 }
 
-func authority(conn *dbus.Conn) dbus.BusObject {
-	return conn.Object(AuthorityName, AuthorityPath)
+func callAuthority(ctx context.Context, conn *dbus.Conn, method string, args ...any) *dbus.Call {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	return conn.Object(AuthorityName, AuthorityPath).CallWithContext(ctx, AuthorityIface+"."+method, 0, args...)
 }

@@ -4,6 +4,24 @@
   fakedialogs,
 }: let
   directoryUID = 1500;
+  keepAction = "dev.stubbe.lys.test.keep";
+  keepSeconds = 20;
+  keepPolicy = pkgs.writeTextDir "share/polkit-1/actions/${keepAction}.policy" ''
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+    <policyconfig>
+      <vendor>lys test</vendor>
+      <action id="${keepAction}">
+        <description>Keep an admin authorization</description>
+        <message>Authentication is required to test retained authorizations</message>
+        <defaults>
+          <allow_any>auth_admin_keep</allow_any>
+          <allow_inactive>auth_admin_keep</allow_inactive>
+          <allow_active>auth_admin_keep</allow_active>
+        </defaults>
+      </action>
+    </policyconfig>
+  '';
   directoryUser = builtins.toJSON {
     userName = "carol";
     uid = directoryUID;
@@ -20,7 +38,9 @@ pkgs.testers.runNixOSTest {
       enablePkexecWrapper = true;
       extraArgs = ["--no-debug" "--log-level=info"];
       adminIdentities = ["unix-user:carol" "unix-group:wheel"];
+      settings.Polkitd.ExpirationSeconds = keepSeconds;
     };
+    environment.systemPackages = [keepPolicy];
     security.wrappers.polkit-agent-helper-1 = {
       setuid = true;
       owner = "root";
@@ -84,6 +104,42 @@ pkgs.testers.runNixOSTest {
         status, out = pkexec()
         machine.succeed("systemctl start polkit-agent-helper.socket")
         assert status == 0, f"pkexec exited {status}: {out}"
+
+    retained_cmd = "busctl --user --machine=alice@ get-property dev.stubbe.lys.Polkit1 /dev/stubbe/lys/Polkit dev.stubbe.lys.Polkit1 TemporaryAuthorizations"
+
+    def retained():
+        return machine.succeed(retained_cmd).strip()
+
+    def asked():
+        return int(machine.succeed("grep -c '^authenticate ' /tmp/vm/log").strip())
+
+    def pkcheck(pid):
+        return machine.execute(f"systemd-run --machine=alice@ --user --pipe --wait --quiet ${pkgs.lib.getBin pkgs.polkit}/bin/pkcheck --action-id ${keepAction} --process {pid} --allow-user-interaction </dev/null 2>&1")
+
+    with subtest("an auth_admin_keep authorization is listed, reused, revoked and expires"):
+        machine.succeed("systemd-run --machine=alice@ --user --unit=holder ${pkgs.lib.getExe' pkgs.coreutils "sleep"} infinity")
+        holder = machine.succeed("systemctl --user --machine=alice@ show --property=MainPID --value holder").strip()
+        assert retained() == "a(sstt) 0", retained()
+        script("answer hunter2")
+        before = asked()
+        status, out = pkcheck(holder)
+        assert status == 0 and asked() == before + 1, f"pkcheck exited {status} after {asked() - before} prompts: {out}"
+        machine.wait_until_succeeds(retained_cmd + " | grep -q '^a(sstt) 1 '", timeout=10)
+        fields = retained().split()
+        assert fields[3] == '"${keepAction}"', retained()
+        assert abs(int(fields[5]) - int(fields[4]) - ${toString keepSeconds}) <= 1, retained()
+
+        status, out = pkcheck(holder)
+        assert status == 0 and asked() == before + 1, f"the retained authorization was not reused: pkcheck exited {status}, {asked() - before} prompts: {out}"
+
+        machine.succeed("systemd-run --machine=alice@ --user --pipe --wait --quiet ${pkgs.lib.getExe lys-polkit} revoke")
+        machine.wait_until_succeeds(retained_cmd + " | grep -qx 'a(sstt) 0'", timeout=10)
+        status, out = pkcheck(holder)
+        assert status == 0 and asked() == before + 2, f"after revoke the action did not ask again: pkcheck exited {status}, {asked() - before} prompts: {out}"
+
+        machine.wait_until_succeeds(retained_cmd + " | grep -q '^a(sstt) 1 '", timeout=10)
+        machine.wait_until_succeeds(retained_cmd + " | grep -qx 'a(sstt) 0'", timeout=${toString (keepSeconds + 15)})
+        machine.succeed("systemctl --user --machine=alice@ stop holder")
 
     with subtest("with lys-polkit stopped pkexec finds no agent"):
         machine.succeed("systemctl --user --machine=alice@ stop lys-polkit.service")

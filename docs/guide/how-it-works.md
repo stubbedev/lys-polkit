@@ -45,6 +45,27 @@ gettext catalogs built into lys-polkit, chosen by `LANGUAGE`, `LC_ALL`,
 `LC_MESSAGES` and `LANG`. German ships today; other languages fall back to
 English.
 
+## Retained admin authorizations
+
+After an `auth_admin_keep` action polkitd keeps a temporary authorization for
+the session (five minutes by default), in which the same action is granted
+without asking. lys-polkit serves them on the session bus as
+`dev.stubbe.lys.Polkit1` at `/dev/stubbe/lys/Polkit`:
+
+- `TemporaryAuthorizations`, a property of `a(sstt)`: each authorization's id,
+  action id, and the Unix times it was obtained and expires, soonest expiry
+  first. `PropertiesChanged` is emitted whenever the list changes.
+- `RevokeAll()` and `Revoke(id)`, which forward to polkitd's
+  `RevokeTemporaryAuthorizations` and `RevokeTemporaryAuthorizationById`.
+
+The list is read again after each successful authentication, on polkitd's
+`Changed` signal, after each registration (so a restarted polkitd is read
+again), and once at the earliest expiry. With no authorizations held it arms no
+timer and makes no calls. `lys-polkit revoke`, the polkit counterpart of
+`sudo -k`, calls `RevokeAll`. The Go package
+`github.com/stubbedev/lys-polkit/retained` is the client side of the
+contract.
+
 ## Identities
 
 polkitd offers the identities that may authenticate. The session's user is

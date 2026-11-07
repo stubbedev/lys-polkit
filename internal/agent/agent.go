@@ -48,6 +48,7 @@ type Config struct {
 	}
 	ProcessName func(polkit.PID) (string, error)
 	Catalog     locale.Catalog
+	Authorized  func()
 }
 
 // Agent is the exported org.freedesktop.PolicyKit1.AuthenticationAgent.
@@ -122,7 +123,11 @@ func (a *Agent) BeginAuthentication(actionID, message, iconName string, details 
 		}
 		return failed("%v", err)
 	}
-	return c.run(j.ctx)
+	if derr := c.run(j.ctx); derr != nil {
+		return derr
+	}
+	a.cfg.Authorized()
+	return nil
 }
 
 // CancelAuthentication cancels the request for cookie, queued or

@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -79,16 +80,17 @@ func (h *host) Dismiss(handle string) {
 }
 
 type env struct {
-	t         *testing.T
-	agentName string
-	caller    *dbus.Conn
-	host      *host
-	emitter   *portaldialogs.Emitter
-	fake      *helpertest.Fake
-	authority *polkittest.Authority
-	release   func()
-	bus       *dbustest.Bus
-	changes   chan struct{}
+	t          *testing.T
+	agentName  string
+	caller     *dbus.Conn
+	host       *host
+	emitter    *portaldialogs.Emitter
+	fake       *helpertest.Fake
+	authority  *polkittest.Authority
+	release    func()
+	bus        *dbustest.Bus
+	changes    chan struct{}
+	authorized *atomic.Int32
 }
 
 type setup struct {
@@ -131,6 +133,7 @@ func start(t *testing.T, s setup) *env {
 		lookup = userName
 	}
 	actions := polkit.NewActions(agentConn, "C")
+	var authorized atomic.Int32
 	a := agent.New(agent.Config{
 		Dialogs:     portaldialogs.NewClient(agentConn),
 		Transport:   fake.Setuid(),
@@ -139,6 +142,7 @@ func start(t *testing.T, s setup) *env {
 		Actions:     actions,
 		ProcessName: processName,
 		Catalog:     s.catalog,
+		Authorized:  func() { authorized.Add(1) },
 	})
 	t.Cleanup(a.Close)
 	changes := make(chan struct{}, 16)
@@ -159,7 +163,7 @@ func start(t *testing.T, s setup) *env {
 			t.Error("Serve did not return within " + timeout.String())
 		}
 	})
-	e := &env{t: t, agentName: agentConn.Names()[0], caller: bus.Conn(t), host: h, emitter: portaldialogs.NewEmitter(hostConn), fake: fake, authority: auth, release: release, bus: bus, changes: changes}
+	e := &env{t: t, agentName: agentConn.Names()[0], caller: bus.Conn(t), host: h, emitter: portaldialogs.NewEmitter(hostConn), fake: fake, authority: auth, release: release, bus: bus, changes: changes, authorized: &authorized}
 	e.registered(auth)
 	e.changed()
 	return e
@@ -615,5 +619,33 @@ msgstr "Aufrufer (Test)"
 	want := []string{"Aktion (Test)", "Anbieter (Test)", "Webseite (Test)", "Programm (Test)", "Befehlszeile (Test)", "Aufrufer (Test)"}
 	if !reflect.DeepEqual(labels, want) {
 		t.Errorf("labels %q, want %q", labels, want)
+	}
+}
+
+func TestOnlySuccessReportsAnAuthorization(t *testing.T) {
+	t.Parallel()
+
+	e := start(t, setup{scenario: helpertest.Answer, sessionUser: alice})
+	done := e.begin(helpertest.Cookie, unixUser(alice))
+	e.expect("Authenticate")
+	e.reply(portaldialogs.AuthCancel{})
+	wantError(t, result(t, done), polkit.ErrCancelled, "cancelled")
+	e.expect("Dismiss")
+	if n := e.authorized.Load(); n != 0 {
+		t.Errorf("%d authorizations reported after a cancel, want none", n)
+	}
+
+	done = e.begin(helpertest.Cookie, unixUser(alice))
+	e.expect("Authenticate")
+	e.reply(answer("wrong"))
+	e.expect("ShowAuthentication")
+	e.expect("Authenticate")
+	e.reply(answer(helpertest.Password))
+	if err := result(t, done); err != nil {
+		t.Fatalf("BeginAuthentication: %v", err)
+	}
+	e.expect("Dismiss")
+	if n := e.authorized.Load(); n != 1 {
+		t.Errorf("%d authorizations reported after one success, want 1", n)
 	}
 }

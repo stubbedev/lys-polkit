@@ -6,6 +6,7 @@ package polkittest
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 
@@ -49,10 +50,11 @@ type Authority struct {
 	Actions     []polkit.ActionDescription
 	FailActions bool
 
-	mu     sync.Mutex
-	conn   *dbus.Conn
-	agents map[string]string
-	calls  map[string]int
+	mu        sync.Mutex
+	conn      *dbus.Conn
+	agents    map[string]string
+	calls     map[string]int
+	temporary []polkit.TemporaryAuthorization
 }
 
 // New makes an Authority whose Events holds up to 16 unread events.
@@ -137,4 +139,44 @@ func (a *Authority) EmitChanged() error {
 	conn := a.conn
 	a.mu.Unlock()
 	return conn.Emit(polkit.AuthorityPath, polkit.AuthorityIface+".Changed")
+}
+
+func (a *Authority) SetTemporary(list []polkit.TemporaryAuthorization) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.temporary = list
+}
+
+func (x authority) EnumerateTemporaryAuthorizations(polkit.Subject) ([]polkit.TemporaryAuthorization, *dbus.Error) {
+	x.a.count("EnumerateTemporaryAuthorizations")
+	x.a.mu.Lock()
+	defer x.a.mu.Unlock()
+	return append([]polkit.TemporaryAuthorization{}, x.a.temporary...), nil
+}
+
+func (x authority) RevokeTemporaryAuthorizations(polkit.Subject) *dbus.Error {
+	x.a.count("RevokeTemporaryAuthorizations")
+	x.a.SetTemporary(nil)
+	return x.changed()
+}
+
+func (x authority) RevokeTemporaryAuthorizationById(id string) *dbus.Error {
+	x.a.count("RevokeTemporaryAuthorizationById")
+	x.a.mu.Lock()
+	i := slices.IndexFunc(x.a.temporary, func(t polkit.TemporaryAuthorization) bool { return t.ID == id })
+	if i >= 0 {
+		x.a.temporary = slices.Delete(slices.Clone(x.a.temporary), i, i+1)
+	}
+	x.a.mu.Unlock()
+	if i < 0 {
+		return dbus.NewError(polkit.ErrFailed, []any{"No such authorization with id `" + id + "'"})
+	}
+	return x.changed()
+}
+
+func (x authority) changed() *dbus.Error {
+	if err := x.a.EmitChanged(); err != nil {
+		return dbus.MakeFailedError(err)
+	}
+	return nil
 }

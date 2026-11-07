@@ -64,10 +64,8 @@ func (a *Actions) Lookup(ctx context.Context, id string) (ActionDescription, err
 }
 
 func (a *Actions) enumerate(ctx context.Context) (map[string]ActionDescription, error) {
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
 	var all []ActionDescription
-	if err := authority(a.conn).CallWithContext(ctx, AuthorityIface+".EnumerateActions", 0, a.locale).Store(&all); err != nil {
+	if err := callAuthority(ctx, a.conn, "EnumerateActions", a.locale).Store(&all); err != nil {
 		return nil, fmt.Errorf("enumerate polkit actions for locale %s: %w", a.locale, err)
 	}
 	known := make(map[string]ActionDescription, len(all))

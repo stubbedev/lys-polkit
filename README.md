@@ -50,6 +50,13 @@ systemctl --user status lys-polkit
 pkexec --disable-internal-agent true
 ```
 
+After an `auth_admin_keep` action polkitd lets the session repeat it without
+asking for a few minutes. To give those rights up at once, as `sudo -k` does:
+
+```sh
+lys-polkit revoke
+```
+
 ## Documentation
 
 The [site](https://stubbedev.github.io/lys-polkit/) covers

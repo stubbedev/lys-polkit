@@ -11,7 +11,9 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/stubbedev/lys-lib/intconv"
 	"github.com/stubbedev/lys-lib/portaldialogs"
@@ -24,6 +26,8 @@ import (
 	"github.com/stubbedev/lys-polkit/internal/passwd"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
 	"github.com/stubbedev/lys-polkit/internal/proc"
+	"github.com/stubbedev/lys-polkit/internal/tracker"
+	"github.com/stubbedev/lys-polkit/retained"
 )
 
 // helperPrograms is where the setuid polkit-agent-helper-1 can be,
@@ -38,6 +42,7 @@ var helperPrograms = "/usr/lib/polkit-1/polkit-agent-helper-1:/run/wrappers/bin/
 var version string
 
 const usage = `Usage: lys-polkit [--version | --help]
+       lys-polkit revoke
 
 lys-polkit is the lys desktop's polkit authentication agent. It registers
 with polkitd for the user's graphical session on the system bus, runs each
@@ -45,10 +50,19 @@ authentication through polkit's agent helper, and asks for the password
 through lys-shell's dialogs on the session bus. It runs until SIGTERM or
 SIGINT, then unregisters.
 
+While it runs it serves the admin authorizations polkitd retains for the
+session (auth_admin_keep) on the session bus as dev.stubbe.lys.Polkit1.
+
+Commands:
+  revoke     give up every retained admin authorization at once, so the
+             next action that needs one asks again
+
 Options:
   --version  print the version and exit
   --help     print this help and exit
 `
+
+const revokeCommand = "revoke"
 
 // command is what the arguments ask for.
 type command int
@@ -57,6 +71,7 @@ const (
 	serve command = iota
 	printVersion
 	printHelp
+	revoke
 )
 
 // parseArgs reads the command line, without the program name.
@@ -72,8 +87,10 @@ func parseArgs(args []string) (command, error) {
 		return serve, err
 	}
 	switch {
+	case fs.NArg() == 1 && fs.Arg(0) == revokeCommand && !*showVersion && !*showHelp:
+		return revoke, nil
 	case fs.NArg() > 0:
-		return serve, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+		return serve, fmt.Errorf("unexpected argument %q", fs.Arg(fs.NArg()-1))
 	case *showVersion && *showHelp:
 		return serve, errors.New("--version and --help exclude each other")
 	case *showVersion:
@@ -108,10 +125,14 @@ func main() {
 	case printHelp:
 		fmt.Print(usage)
 		return
-	case serve:
+	case serve, revoke:
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	err = run(ctx)
+	if cmd == revoke {
+		err = revokeAll(ctx)
+	} else {
+		err = run(ctx)
+	}
 	stop()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "lys-polkit:", err)
@@ -149,6 +170,18 @@ func run(ctx context.Context) error {
 	}
 	r := polkit.Registration{Subject: polkit.SessionSubject(id), Locale: polkit.Locale(os.Getenv)}
 	actions := polkit.NewActions(system, r.Locale)
+	temporary := polkit.NewTemporary(system, r.Subject)
+	server, release, err := retained.Serve(session, temporary)
+	if err != nil {
+		return err
+	}
+	defer release()
+	track := tracker.New(tracker.Config{List: temporary.List, Publish: server.Publish, Clock: tracker.SystemClock{}})
+	tracking, stopTracking := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() { track.Run(tracking) })
+	defer wg.Wait()
+	defer stopTracking()
 	a := agent.New(agent.Config{
 		Dialogs:     portaldialogs.NewClient(session),
 		Transport:   helper.Transport{Socket: helper.SocketPath, Programs: strings.Split(helperPrograms, ":")},
@@ -157,9 +190,26 @@ func run(ctx context.Context) error {
 		Actions:     actions,
 		ProcessName: proc.System.Name,
 		Catalog:     catalog,
+		Authorized:  track.Refresh,
 	})
 	defer a.Close()
-	return polkit.Serve(ctx, system, r, a, actions.Forget)
+	return polkit.Serve(ctx, system, r, a, func() {
+		actions.Forget()
+		track.Refresh()
+	})
+}
+
+const revokeTimeout = 15 * time.Second
+
+func revokeAll(ctx context.Context) error {
+	session, err := dbus.ConnectSessionBus()
+	if err != nil {
+		return fmt.Errorf("connect to the session bus: %w", err)
+	}
+	defer func() { _ = session.Close() }()
+	ctx, cancel := context.WithTimeout(ctx, revokeTimeout)
+	defer cancel()
+	return retained.NewClient(session).RevokeAll(ctx)
 }
 
 func userName(ctx context.Context, uid polkit.UID) (string, error) {
