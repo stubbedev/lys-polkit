@@ -85,8 +85,9 @@ type Registration struct {
 // r.Subject, again each time org.freedesktop.PolicyKit1 gains a new
 // owner, until ctx ends; then it unregisters. Any refusal, such as
 // another agent already registered for the subject, ends Serve with
-// polkitd's error.
-func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any) error {
+// polkitd's error. changed runs on Serve's goroutine after each
+// registration and on each of the Authority's Changed signals.
+func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any, changed func()) error {
 	unexport, err := dbusx.Export(conn, AgentPath, dbusx.Interface{Name: AgentIface, Methods: agent})
 	if err != nil {
 		return fmt.Errorf("export polkit agent at %s: %w", AgentPath, err)
@@ -96,17 +97,19 @@ func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any) erro
 	signals := make(chan *dbus.Signal, 16)
 	conn.Signal(signals)
 	defer conn.RemoveSignal(signals)
-	match := dbusx.OwnerMatch(AuthorityName)
-	if err := conn.AddMatchSignalContext(ctx, match...); err != nil {
-		return fmt.Errorf("watch %s: %w", AuthorityName, err)
+	for _, match := range [][]dbus.MatchOption{dbusx.OwnerMatch(AuthorityName), changedMatch} {
+		if err := conn.AddMatchSignalContext(ctx, match...); err != nil {
+			return fmt.Errorf("watch %s: %w", AuthorityName, err)
+		}
+		defer func() { _ = conn.RemoveMatchSignal(match...) }()
 	}
-	defer func() { _ = conn.RemoveMatchSignal(match...) }()
 
 	calls := context.WithoutCancel(ctx)
 	registered, err := register(calls, conn, r)
 	if err != nil {
 		return err
 	}
+	changed()
 	for {
 		select {
 		case <-ctx.Done():
@@ -115,14 +118,28 @@ func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any) erro
 			if !ok {
 				return errors.New("system bus connection closed")
 			}
+			if sig.Path == AuthorityPath && sig.Name == changedSignal {
+				changed()
+				continue
+			}
 			if _, owner, isAuthority := dbusx.NameOwnerChange(sig, AuthorityName); !isAuthority || owner == "" || sig.Sequence <= registered {
 				continue
 			}
 			if registered, err = register(calls, conn, r); err != nil {
 				return err
 			}
+			changed()
 		}
 	}
+}
+
+const changedSignal = AuthorityIface + ".Changed"
+
+var changedMatch = []dbus.MatchOption{
+	dbus.WithMatchSender(AuthorityName),
+	dbus.WithMatchObjectPath(AuthorityPath),
+	dbus.WithMatchInterface(AuthorityIface),
+	dbus.WithMatchMember("Changed"),
 }
 
 // register registers the agent and returns the sequence of polkitd's

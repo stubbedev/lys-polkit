@@ -58,6 +58,10 @@ pkgs.testers.runNixOSTest {
         status, out = pkexec()
         assert status == 0, f"pkexec exited {status}: {out}"
 
+    with subtest("the details name the action, its vendor and the calling program"):
+        machine.succeed("grep -q 'details=\\[Action:\"org.freedesktop.policykit.exec\" Vendor:\"The polkit project\" ' /tmp/vm/log")
+        machine.succeed("grep -q 'Caller:\"pkexec ([0-9]*)\"\\]' /tmp/vm/log")
+
     with subtest("a user only the name service knows is offered by name"):
         machine.fail("grep -q '^carol:' /etc/passwd")
         machine.succeed("getent passwd ${toString directoryUID} | grep -q '^carol:'")

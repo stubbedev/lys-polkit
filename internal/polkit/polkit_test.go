@@ -46,7 +46,7 @@ func serve(t *testing.T, conn *dbus.Conn, r polkit.Registration) served {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	s := served{cancel: cancel, done: make(chan error, 1)}
-	go func() { s.done <- polkit.Serve(ctx, conn, r, agent{}) }()
+	go func() { s.done <- polkit.Serve(ctx, conn, r, agent{}, func() {}) }()
 	t.Cleanup(cancel)
 	return s
 }
@@ -130,7 +130,7 @@ func TestServeRefusedForASecondAgent(t *testing.T) {
 	auth.Preregister(subject)
 	auth.Serve(t, bus.Conn(t))
 
-	err := polkit.Serve(t.Context(), bus.Conn(t), polkit.Registration{Subject: subject, Locale: "C"}, agent{})
+	err := polkit.Serve(t.Context(), bus.Conn(t), polkit.Registration{Subject: subject, Locale: "C"}, agent{}, func() {})
 	var derr dbus.Error
 	if !errors.As(err, &derr) || derr.Name != polkit.ErrFailed || !strings.Contains(err.Error(), polkittest.AlreadyExists) {
 		t.Fatalf("Serve = %v, want polkit's %q", err, polkittest.AlreadyExists)
@@ -189,5 +189,58 @@ func TestLocale(t *testing.T) {
 				t.Errorf("Locale = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestServeReportsRegistrationsAndChanges(t *testing.T) {
+	t.Parallel()
+
+	bus := dbustest.Start(t)
+	first := polkittest.New()
+	release := first.Serve(t, bus.Conn(t))
+	authorityConn := bus.Conn(t)
+	conn := bus.Conn(t)
+	changes := make(chan struct{}, 16)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- polkit.Serve(ctx, conn, polkit.Registration{Subject: polkit.SessionSubject("c2"), Locale: "C"}, agent{}, func() { changes <- struct{}{} })
+	}()
+	change := func(why string) {
+		t.Helper()
+		select {
+		case <-changes:
+		case <-time.After(eventTimeout):
+			t.Fatalf("no change reported %s within %s", why, eventTimeout)
+		}
+	}
+	next(t, first)
+	change("after the registration")
+
+	if err := authorityConn.Emit(polkit.AuthorityPath, polkit.AuthorityIface+".Changed"); err != nil {
+		t.Fatalf("emit Changed from a peer that is not polkitd: %v", err)
+	}
+	release()
+	second := polkittest.New()
+	second.Serve(t, bus.Conn(t))
+	if err := second.EmitChanged(); err != nil {
+		t.Fatalf("emit Changed: %v", err)
+	}
+	next(t, second)
+	change("after the registration with the restarted polkitd")
+	change("on polkitd's Changed")
+	select {
+	case <-changes:
+		t.Error("a change reported for a Changed signal polkitd did not send")
+	default:
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+	case <-time.After(eventTimeout):
+		t.Fatal("Serve did not return within " + eventTimeout.String())
 	}
 }

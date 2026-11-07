@@ -4,20 +4,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/stubbedev/lys-lib/dbustest"
-	"github.com/stubbedev/lys-lib/dbusx"
 	"github.com/stubbedev/lys-lib/portaldialogs"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
 	"github.com/stubbedev/lys-polkit/internal/agent"
 	"github.com/stubbedev/lys-polkit/internal/helper/helpertest"
+	"github.com/stubbedev/lys-polkit/internal/locale"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
+	"github.com/stubbedev/lys-polkit/internal/polkit/polkittest"
 )
 
 func TestMain(m *testing.M) {
@@ -81,6 +85,10 @@ type env struct {
 	host      *host
 	emitter   *portaldialogs.Emitter
 	fake      *helpertest.Fake
+	authority *polkittest.Authority
+	release   func()
+	bus       *dbustest.Bus
+	changes   chan struct{}
 }
 
 type setup struct {
@@ -88,6 +96,17 @@ type setup struct {
 	sessionUser polkit.UID
 	noDialogs   bool
 	userName    func(context.Context, polkit.UID) (string, error)
+	failActions bool
+	catalog     locale.Catalog
+}
+
+const callerPID = 4242
+
+func processName(pid polkit.PID) (string, error) {
+	if pid == callerPID {
+		return "pkexec", nil
+	}
+	return "", fmt.Errorf("process %d: %w", pid, fs.ErrNotExist)
 }
 
 func start(t *testing.T, s setup) *env {
@@ -101,30 +120,68 @@ func start(t *testing.T, s setup) *env {
 			t.Fatalf("export dialogs: %v", err)
 		}
 	}
+	auth := polkittest.New()
+	auth.Actions = []polkit.ActionDescription{polkittest.ExecAction}
+	auth.FailActions = s.failActions
+	release := auth.Serve(t, bus.Conn(t))
 	fake := helpertest.New(t, s.scenario)
 	agentConn := bus.Conn(t)
 	lookup := s.userName
 	if lookup == nil {
 		lookup = userName
 	}
+	actions := polkit.NewActions(agentConn, "C")
 	a := agent.New(agent.Config{
 		Dialogs:     portaldialogs.NewClient(agentConn),
 		Transport:   fake.Setuid(),
 		UserName:    lookup,
 		SessionUser: s.sessionUser,
+		Actions:     actions,
+		ProcessName: processName,
+		Catalog:     s.catalog,
 	})
 	t.Cleanup(a.Close)
-	if _, err := dbusx.Export(agentConn, polkit.AgentPath, dbusx.Interface{Name: polkit.AgentIface, Methods: a}); err != nil {
-		t.Fatalf("export agent: %v", err)
+	changes := make(chan struct{}, 16)
+	changed := func() {
+		actions.Forget()
+		changes <- struct{}{}
 	}
-	return &env{t: t, agentName: agentConn.Names()[0], caller: bus.Conn(t), host: h, emitter: portaldialogs.NewEmitter(hostConn), fake: fake}
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() {
+		served <- polkit.Serve(ctx, agentConn, polkit.Registration{Subject: polkit.SessionSubject("c2"), Locale: "C"}, a, changed)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-served:
+		case <-time.After(timeout):
+			t.Error("Serve did not return within " + timeout.String())
+		}
+	})
+	e := &env{t: t, agentName: agentConn.Names()[0], caller: bus.Conn(t), host: h, emitter: portaldialogs.NewEmitter(hostConn), fake: fake, authority: auth, release: release, bus: bus, changes: changes}
+	e.registered(auth)
+	e.changed()
+	return e
+}
+
+func (e *env) registered(auth *polkittest.Authority) {
+	e.t.Helper()
+	select {
+	case ev := <-auth.Events:
+		if !ev.Register {
+			e.t.Fatalf("Authority saw %+v, want the agent registered", ev)
+		}
+	case <-time.After(timeout):
+		e.t.Fatal("the agent did not register within " + timeout.String())
+	}
 }
 
 func unixUser(uid polkit.UID) polkit.Identity {
 	return polkit.Identity{Kind: "unix-user", Details: map[string]dbus.Variant{"uid": dbus.MakeVariant(uint32(uid))}}
 }
 
-var details = map[string]string{"program": "/usr/bin/true", "command_line": "/usr/bin/true --now", "polkit.caller-pid": "4242", "user": "root"}
+var details = map[string]string{"program": "/usr/bin/true", "command_line": "/usr/bin/true --now", "polkit.caller-pid": strconv.Itoa(callerPID), "user": "root"}
 
 // begin calls BeginAuthentication over the bus; the returned channel
 // receives its result.
@@ -133,7 +190,7 @@ func (e *env) begin(cookie string, ids ...polkit.Identity) <-chan error {
 	done := make(chan error, 1)
 	go func() {
 		done <- e.caller.Object(e.agentName, polkit.AgentPath).Call(polkit.AgentIface+".BeginAuthentication", 0,
-			"org.example.test", "Authenticate to test", "dialog-password", details, cookie, ids).Err
+			polkittest.ExecAction.ActionID, "Authenticate to test", "dialog-password", details, cookie, ids).Err
 	}()
 	return done
 }
@@ -204,9 +261,12 @@ func TestSuccess(t *testing.T) {
 		Message: "Authenticate to test",
 		Icon:    "dialog-password",
 		Details: []portaldialogs.AuthDetail{
+			{Label: "Action", Value: polkittest.ExecAction.ActionID},
+			{Label: "Vendor", Value: polkittest.ExecAction.VendorName},
+			{Label: "Website", Value: polkittest.ExecAction.VendorURL},
 			{Label: "Program", Value: "/usr/bin/true"},
 			{Label: "Command line", Value: "/usr/bin/true --now"},
-			{Label: "Caller process", Value: "4242"},
+			{Label: "Caller", Value: "pkexec (4242)"},
 		},
 		Identities: []portaldialogs.AuthIdentity{{UID: uint32(bob), Name: "bob"}, {UID: uint32(alice), Name: helpertest.User}},
 		Selected:   uint32(alice),
@@ -240,8 +300,8 @@ func TestRetryAfterFailure(t *testing.T) {
 		t.Errorf("notes after a wrong answer %+v", c.req.Notes)
 	}
 	c := e.expect("Authenticate")
-	if !reflect.DeepEqual(c.req.Notes, []portaldialogs.AuthNote{{Error: true, Text: agent.FailedNote}}) || c.req.Selected != uint32(alice) {
-		t.Errorf("retry %+v, want the same identity with %q", c.req, agent.FailedNote)
+	if !reflect.DeepEqual(c.req.Notes, []portaldialogs.AuthNote{{Error: true, Text: string(locale.AuthenticationFailed)}}) || c.req.Selected != uint32(alice) {
+		t.Errorf("retry %+v, want the same identity with %q", c.req, locale.AuthenticationFailed)
 	}
 	e.reply(answer(helpertest.Password))
 	if err := result(t, done); err != nil {
@@ -433,5 +493,127 @@ func TestDialogsAbsentFails(t *testing.T) {
 	wantError(t, result(t, e.begin("cookie-1", unixUser(alice))), polkit.ErrFailed, portaldialogs.ServiceName)
 	if n := e.fake.Started(t); n != 0 {
 		t.Errorf("%d helper sessions without the dialogs, want none", n)
+	}
+}
+
+func (e *env) changed() {
+	e.t.Helper()
+	select {
+	case <-e.changes:
+	case <-time.After(timeout):
+		e.t.Fatal("Serve reported no change within " + timeout.String())
+	}
+}
+
+func (e *env) succeed() portaldialogs.AuthRequest {
+	e.t.Helper()
+	done := e.begin(helpertest.Cookie, unixUser(alice))
+	c := e.expect("ShowAuthentication")
+	if err := result(e.t, done); err != nil {
+		e.t.Fatalf("BeginAuthentication: %v", err)
+	}
+	e.expect("Dismiss")
+	return c.req
+}
+
+func TestActionsEnumeratedOncePerAuthority(t *testing.T) {
+	t.Parallel()
+
+	e := start(t, setup{scenario: helpertest.InfoOnly, sessionUser: alice})
+	for range 5 {
+		e.succeed()
+	}
+	if n := e.authority.Calls("EnumerateActions"); n != 1 {
+		t.Errorf("EnumerateActions called %d times for 5 requests, want 1", n)
+	}
+
+	e.release()
+	restarted := polkittest.New()
+	restarted.Actions = []polkit.ActionDescription{polkittest.ExecAction}
+	restarted.Serve(t, e.bus.Conn(t))
+	e.registered(restarted)
+	e.changed()
+	for range 3 {
+		req := e.succeed()
+		if req.Details[1].Value != polkittest.ExecAction.VendorName {
+			t.Errorf("details after the restart %+v, want the vendor", req.Details)
+		}
+	}
+	if n := restarted.Calls("EnumerateActions"); n != 1 {
+		t.Errorf("restarted polkitd: EnumerateActions called %d times for 3 requests, want 1", n)
+	}
+}
+
+func TestFailedEnumerationShowsTheActionID(t *testing.T) {
+	t.Parallel()
+
+	e := start(t, setup{scenario: helpertest.InfoOnly, sessionUser: alice, failActions: true})
+	want := []portaldialogs.AuthDetail{
+		{Label: "Action", Value: polkittest.ExecAction.ActionID},
+		{Label: "Program", Value: "/usr/bin/true"},
+		{Label: "Command line", Value: "/usr/bin/true --now"},
+		{Label: "Caller", Value: "pkexec (4242)"},
+	}
+	if got := e.succeed().Details; !reflect.DeepEqual(got, want) {
+		t.Errorf("details %+v, want %+v", got, want)
+	}
+}
+
+func TestGoneCallerShowsItsPID(t *testing.T) {
+	t.Parallel()
+
+	e := start(t, setup{scenario: helpertest.InfoOnly, sessionUser: alice})
+	done := make(chan error, 1)
+	go func() {
+		done <- e.caller.Object(e.agentName, polkit.AgentPath).Call(polkit.AgentIface+".BeginAuthentication", 0,
+			polkittest.ExecAction.ActionID, "Authenticate to test", "", map[string]string{"polkit.caller-pid": "4711"}, "cookie-1", []polkit.Identity{unixUser(alice)}).Err
+	}()
+	c := e.expect("ShowAuthentication")
+	if last := c.req.Details[len(c.req.Details)-1]; last != (portaldialogs.AuthDetail{Label: "Caller", Value: "4711"}) {
+		t.Errorf("caller detail %+v, want the pid alone", last)
+	}
+	if err := result(t, done); err != nil {
+		t.Fatalf("BeginAuthentication: %v", err)
+	}
+}
+
+func TestLabelsFollowTheCatalog(t *testing.T) {
+	t.Setenv("LANGUAGE", "")
+	t.Setenv("LC_ALL", "")
+	t.Setenv("LC_MESSAGES", "")
+	t.Setenv("LANG", "de_DE.UTF-8")
+	po := `msgid ""
+msgstr "Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Action"
+msgstr "Aktion (Test)"
+
+msgid "Vendor"
+msgstr "Anbieter (Test)"
+
+msgid "Website"
+msgstr "Webseite (Test)"
+
+msgid "Program"
+msgstr "Programm (Test)"
+
+msgid "Command line"
+msgstr "Befehlszeile (Test)"
+
+msgid "Caller"
+msgstr "Aufrufer (Test)"
+`
+	catalog, err := locale.Load(fstest.MapFS{"de/LC_MESSAGES/" + locale.Domain + ".po": {Data: []byte(po)}})
+	if err != nil {
+		t.Fatalf("load the fixture catalog: %v", err)
+	}
+	e := start(t, setup{scenario: helpertest.InfoOnly, sessionUser: alice, catalog: catalog})
+	var labels []string
+	for _, d := range e.succeed().Details {
+		labels = append(labels, d.Label)
+	}
+	want := []string{"Aktion (Test)", "Anbieter (Test)", "Webseite (Test)", "Programm (Test)", "Befehlszeile (Test)", "Aufrufer (Test)"}
+	if !reflect.DeepEqual(labels, want) {
+		t.Errorf("labels %q, want %q", labels, want)
 	}
 }

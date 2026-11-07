@@ -84,7 +84,7 @@ func (h *host) Authenticate(c portaldialogs.Caller, r portaldialogs.AuthRequest)
 	for _, id := range r.Identities {
 		names = append(names, id.Name)
 	}
-	h.logf("authenticate handle=%s selected=%d identities=%s prompt=%q notes=%s", c.Handle, r.Selected, strings.Join(names, ","), r.Prompt, notes(r.Notes))
+	h.logf("authenticate handle=%s selected=%d identities=%s prompt=%q notes=%s details=%s", c.Handle, r.Selected, strings.Join(names, ","), r.Prompt, notes(r.Notes), details(r.Details))
 	reply, err := h.reply(n)
 	if err != nil {
 		h.logf("script: %v; cancelling", err)
@@ -124,13 +124,23 @@ func (h *host) Dismiss(handle string) {
 }
 
 func notes(ns []portaldialogs.AuthNote) string {
-	parts := make([]string, len(ns))
-	for i, n := range ns {
+	return bracketed(ns, func(n portaldialogs.AuthNote) string {
 		kind := "info"
 		if n.Error {
 			kind = "error"
 		}
-		parts[i] = fmt.Sprintf("%s:%q", kind, n.Text)
+		return fmt.Sprintf("%s:%q", kind, n.Text)
+	})
+}
+
+func details(ds []portaldialogs.AuthDetail) string {
+	return bracketed(ds, func(d portaldialogs.AuthDetail) string { return fmt.Sprintf("%s:%q", d.Label, d.Value) })
+}
+
+func bracketed[T any](items []T, show func(T) string) string {
+	parts := make([]string, len(items))
+	for i, item := range items {
+		parts[i] = show(item)
 	}
 	return "[" + strings.Join(parts, " ") + "]"
 }

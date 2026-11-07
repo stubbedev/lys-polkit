@@ -1,0 +1,26 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: de\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Action"
+msgstr "Aktion"
+
+msgid "Vendor"
+msgstr "Anbieter"
+
+msgid "Website"
+msgstr "Webseite"
+
+msgid "Program"
+msgstr "Programm"
+
+msgid "Command line"
+msgstr "Befehlszeile"
+
+msgid "Caller"
+msgstr "Aufrufer"
+
+msgid "Authentication failed"
+msgstr "Authentifizierung fehlgeschlagen"

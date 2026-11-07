@@ -19,9 +19,11 @@ import (
 
 	"github.com/stubbedev/lys-polkit/internal/agent"
 	"github.com/stubbedev/lys-polkit/internal/helper"
+	"github.com/stubbedev/lys-polkit/internal/locale"
 	"github.com/stubbedev/lys-polkit/internal/logind"
 	"github.com/stubbedev/lys-polkit/internal/passwd"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
+	"github.com/stubbedev/lys-polkit/internal/proc"
 )
 
 // helperPrograms is where the setuid polkit-agent-helper-1 can be,
@@ -141,14 +143,23 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	catalog, err := locale.Load(locale.Embedded)
+	if err != nil {
+		return err
+	}
+	r := polkit.Registration{Subject: polkit.SessionSubject(id), Locale: polkit.Locale(os.Getenv)}
+	actions := polkit.NewActions(system, r.Locale)
 	a := agent.New(agent.Config{
 		Dialogs:     portaldialogs.NewClient(session),
 		Transport:   helper.Transport{Socket: helper.SocketPath, Programs: strings.Split(helperPrograms, ":")},
 		UserName:    userName,
 		SessionUser: polkit.UID(uid),
+		Actions:     actions,
+		ProcessName: proc.System.Name,
+		Catalog:     catalog,
 	})
 	defer a.Close()
-	return polkit.Serve(ctx, system, polkit.Registration{Subject: polkit.SessionSubject(id), Locale: polkit.Locale(os.Getenv)}, a)
+	return polkit.Serve(ctx, system, r, a, actions.Forget)
 }
 
 func userName(ctx context.Context, uid polkit.UID) (string, error) {

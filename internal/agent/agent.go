@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -17,12 +18,9 @@ import (
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
 	"github.com/stubbedev/lys-polkit/internal/helper"
+	"github.com/stubbedev/lys-polkit/internal/locale"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
 )
-
-// FailedNote is the note a new attempt shows after the helper's
-// FAILURE.
-const FailedNote = "Authentication failed"
 
 // dismissTimeout bounds taking the dialog down once a request ended.
 const dismissTimeout = 5 * time.Second
@@ -45,6 +43,11 @@ type Config struct {
 	// SessionUser is the uid of the session's user, the identity chosen
 	// first when it is offered.
 	SessionUser polkit.UID
+	Actions     interface {
+		Lookup(ctx context.Context, id string) (polkit.ActionDescription, error)
+	}
+	ProcessName func(polkit.PID) (string, error)
+	Catalog     locale.Catalog
 }
 
 // Agent is the exported org.freedesktop.PolicyKit1.AuthenticationAgent.
@@ -88,7 +91,7 @@ var cancelled = dbus.NewError(polkit.ErrCancelled, []any{"Authentication was can
 // BeginAuthentication authenticates one of identities for cookie and
 // returns once the helper reported success to polkitd, the user or
 // polkitd cancelled, or it failed.
-func (a *Agent) BeginAuthentication(_, message, iconName string, details map[string]string, cookie string, identities []polkit.Identity) *dbus.Error {
+func (a *Agent) BeginAuthentication(actionID, message, iconName string, details map[string]string, cookie string, identities []polkit.Identity) *dbus.Error {
 	uids, err := polkit.ParseIdentities(identities)
 	if err != nil {
 		return failed("%v", err)
@@ -111,7 +114,7 @@ func (a *Agent) BeginAuthentication(_, message, iconName string, details map[str
 		cfg:    a.cfg,
 		cookie: cookie,
 		caller: portaldialogs.Caller{Handle: j.handle, Modal: true},
-		base:   portaldialogs.AuthRequest{Message: message, Icon: iconName, Details: detailLines(shown)},
+		base:   portaldialogs.AuthRequest{Message: message, Icon: iconName, Details: a.detailLines(j.ctx, actionID, shown)},
 	}
 	if err := c.identities(j.ctx, uids); err != nil {
 		if j.ctx.Err() != nil {
@@ -180,18 +183,41 @@ func (a *Agent) enqueue(cookie string) (job, *dbus.Error) {
 	}, nil
 }
 
-func detailLines(d polkit.Details) []portaldialogs.AuthDetail {
-	var lines []portaldialogs.AuthDetail
+func (a *Agent) detailLines(ctx context.Context, actionID string, d polkit.Details) []portaldialogs.AuthDetail {
+	tr := a.cfg.Catalog.Get
+	lines := []portaldialogs.AuthDetail{{Label: tr(locale.Action), Value: actionID}}
+	if action, err := a.cfg.Actions.Lookup(ctx, actionID); err != nil {
+		slog.Error("describe polkit action", "action", actionID, "err", err)
+	} else {
+		if action.VendorName != "" {
+			lines = append(lines, portaldialogs.AuthDetail{Label: tr(locale.Vendor), Value: action.VendorName})
+		}
+		if action.VendorURL != "" {
+			lines = append(lines, portaldialogs.AuthDetail{Label: tr(locale.Website), Value: action.VendorURL})
+		}
+	}
 	if d.Program != "" {
-		lines = append(lines, portaldialogs.AuthDetail{Label: "Program", Value: d.Program})
+		lines = append(lines, portaldialogs.AuthDetail{Label: tr(locale.Program), Value: d.Program})
 	}
 	if d.CommandLine != "" {
-		lines = append(lines, portaldialogs.AuthDetail{Label: "Command line", Value: d.CommandLine})
+		lines = append(lines, portaldialogs.AuthDetail{Label: tr(locale.CommandLine), Value: d.CommandLine})
 	}
 	if d.CallerPID != 0 {
-		lines = append(lines, portaldialogs.AuthDetail{Label: "Caller process", Value: strconv.FormatUint(uint64(d.CallerPID), 10)})
+		lines = append(lines, portaldialogs.AuthDetail{Label: tr(locale.Caller), Value: a.caller(d.CallerPID)})
 	}
 	return lines
+}
+
+func (a *Agent) caller(pid polkit.PID) string {
+	id := strconv.FormatUint(uint64(pid), 10)
+	name, err := a.cfg.ProcessName(pid)
+	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			slog.Error("name the polkit caller", "pid", pid, "err", err)
+		}
+		return id
+	}
+	return name + " (" + id + ")"
 }
 
 // conversation is one request's dialog and the helper sessions behind
@@ -250,7 +276,7 @@ func (c *conversation) run(ctx context.Context) *dbus.Error {
 		case finished:
 			return result
 		case rejected:
-			notes = []portaldialogs.AuthNote{{Error: true, Text: FailedNote}}
+			notes = []portaldialogs.AuthNote{{Error: true, Text: c.cfg.Catalog.Get(locale.AuthenticationFailed)}}
 		case switched:
 			notes = nil
 		}

@@ -20,8 +20,9 @@ Requests are answered one at a time, first in first out. For each one:
    identity.
 2. The helper's prompts appear in the dialog, and so do its information and
    error messages, such as a fingerprint reader asking for a finger. The dialog
-   also shows polkitd's message and icon, and the program, command line and
-   caller process when polkitd sends them.
+   also shows polkitd's message and icon, and its details: the action id, the
+   action's vendor and vendor website, and the program, command line and
+   calling process (its executable's name and pid) when polkitd sends them.
 3. Answers go to the helper and are not kept.
 4. On success the helper has told polkitd itself. lys-polkit takes the dialog
    down and returns to polkitd.
@@ -30,6 +31,19 @@ A wrong password starts a new attempt with "Authentication failed" shown.
 Cancelling returns polkit's `Cancelled`, and so does polkitd cancelling the
 request, queued or running. If the dialog host goes away during a request, it
 fails with polkit's `Failed`.
+
+## Details
+
+The action's vendor comes from polkitd's `EnumerateActions`, asked once in the
+session's locale and kept until polkitd restarts or reports a change. When that
+fails the dialog still opens, with the action id alone, and the failure is
+logged. The calling process is named from `/proc/<pid>/exe`, or `comm` when the
+executable cannot be read; a process already gone shows its pid alone.
+
+The detail labels and the "Authentication failed" note are translated from the
+gettext catalogs built into lys-polkit, chosen by `LANGUAGE`, `LC_ALL`,
+`LC_MESSAGES` and `LANG`. German ships today; other languages fall back to
+English.
 
 ## Identities
 
