@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 
-	"github.com/stubbedev/lys-ui/i18n"
+	"github.com/stubbedev/lys-lib/i18n"
 )
 
 type Message string
