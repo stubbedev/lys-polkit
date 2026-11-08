@@ -1,50 +1,55 @@
 # Configuration
 
-lys-polkit has no configuration file. It finds its session, its helper and
-its dialogs by itself, so there is little to set.
+There is no configuration file.
 
 ## Home-manager options
 
-| Option | Default | What it does |
-| --- | --- | --- |
-| `services.lys-polkit.enable` | `false` | Installs the package and links its user unit into the wants of `graphical-session.target` |
-| `services.lys-polkit.package` | `lys-polkit.packages.${system}.default` | The package whose user unit is installed |
+| Option | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `services.lys-polkit.enable` | bool | `false` | Installs the package and links its user unit into `graphical-session.target.wants` |
+| `services.lys-polkit.package` | package | `lys-polkit.packages.${system}.default` | Package whose binary and user unit are used |
 
 ## Build-time values
 
-The helper paths and the version are set when the binary is built, with
-`-ldflags -X`.
+Set with `go build -ldflags "-X <variable>=<value>"`.
 
-| Variable | Default | What it is |
+| Variable | Default | Effect |
 | --- | --- | --- |
-| `main.helperPrograms` | `/usr/lib/polkit-1/polkit-agent-helper-1:/run/wrappers/bin/polkit-agent-helper-1` | Where the setuid helper can be, colon-separated; the first that exists runs, and only when [the helper socket](./how-it-works#supported-polkit) does not exist |
-| `main.version` | The module version Go recorded | What `--version` prints |
+| `main.helperPrograms` | `/usr/lib/polkit-1/polkit-agent-helper-1:/run/wrappers/bin/polkit-agent-helper-1` | Colon-separated candidate paths of the setuid helper; the first that exists runs, only when the [helper socket](./how-it-works#supported-polkit) is absent |
+| `main.version` | Module version recorded by Go | Printed by `--version` |
 
 ## Command line
 
 ```
 lys-polkit [--version | --help]
+lys-polkit revoke
 ```
 
-| Option | What it does |
+| Invocation | Effect |
 | --- | --- |
-| `--version` | Prints the version and exits |
-| `--help` | Prints the usage and exits |
+| `lys-polkit` | Serves as the session's agent until SIGTERM or SIGINT, then unregisters |
+| `lys-polkit revoke` | Revokes every [retained admin authorization](./how-it-works#retained-admin-authorizations) of the session (15 s timeout) |
+| `--version` | Prints `lys-polkit <version>` and exits |
+| `--help` | Prints usage and exits |
 
-Without options it serves until SIGTERM or SIGINT, then unregisters. A
-failure exits 1 and a wrong command line exits 2.
+Exit status: 0 on success, 1 on failure, 2 on an invalid command line.
 
 ## Language
 
-lys-polkit tells polkitd the first of `LC_ALL`, `LC_MESSAGES` and `LANG` that
-is set in its environment, else `C`. polkitd translates the action messages
-into that locale. The unit takes these from the systemd user manager's
-environment.
+polkitd translates action messages into the locale lys-polkit registers with:
+the first set of `LC_ALL`, `LC_MESSAGES`, `LANG`, else `C`. lys-polkit's own
+strings follow `LANGUAGE`, `LC_ALL`, `LC_MESSAGES`, `LANG` (see
+[details](./how-it-works#details)). The unit inherits these from the systemd
+user manager.
 
-## The user unit
+## User unit
 
-`dist/lys-polkit.service.in` is part of and ordered after
-`graphical-session.target`. It restarts lys-polkit on failure after 2 seconds,
-with at most three starts a minute, so a refused registration ends in a failed
-unit visible in `systemctl --user status lys-polkit` instead of a restart
-loop.
+`dist/lys-polkit.service.in`:
+
+| Setting | Value |
+| --- | --- |
+| `PartOf`, `After`, `WantedBy` | `graphical-session.target` |
+| `Restart` / `RestartSec` | `on-failure` / `2` |
+| `StartLimitBurst` / `StartLimitIntervalSec` | `3` / `60` |
+
+A repeatedly refused registration ends as a failed unit, not a restart loop.

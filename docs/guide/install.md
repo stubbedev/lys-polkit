@@ -1,12 +1,11 @@
 # Install
 
-Whichever way you install it, keep one agent per session: disable the polkit
-agent the session started before.
+Disable any other polkit agent the session starts; polkitd accepts one per
+session.
 
-## With home-manager
+## Home-manager
 
-The flake exports a home-manager module, for NixOS or any other distribution
-with nix:
+For NixOS or any distribution with nix:
 
 ```nix
 {
@@ -15,23 +14,17 @@ with nix:
   # in the home-manager configuration
   imports = [inputs.lys-polkit.homeManagerModules.default];
   services.lys-polkit.enable = true;
-  # one agent per session: drop the one it replaces
-  services.hyprpolkitagent.enable = false;
+  services.hyprpolkitagent.enable = false; # one agent per session
 }
 ```
 
-It installs the package and the `lys-polkit.service` user unit, wanted by
-`graphical-session.target`.
-
-On NixOS, `security.polkit.enable = true` provides polkitd and polkit 127's
-helper socket, which lys-polkit uses. On another distribution polkit 127's
-socket is used too, and an older polkit's setuid helper is found at
-`/usr/lib/polkit-1/polkit-agent-helper-1`.
+This installs the package and the `lys-polkit.service` user unit, wanted by
+`graphical-session.target`. On NixOS, polkitd comes from
+`security.polkit.enable = true`.
 
 ## Without nix
 
-You need the Go version `go.mod` declares. Build, install the binary and the
-user unit, and enable it for the graphical session:
+Requires the Go version declared in `go.mod`.
 
 ```sh
 git clone https://github.com/stubbedev/lys-polkit
@@ -44,4 +37,6 @@ systemctl --user daemon-reload
 systemctl --user enable --now lys-polkit.service
 ```
 
-Then [check that it works](./getting-started#check-that-it-works).
+`getent` must be on the service's `PATH` (see [identities](./how-it-works#identities)).
+
+Then [check that it works](./getting-started#check).
