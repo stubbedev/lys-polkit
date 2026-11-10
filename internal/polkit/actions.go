@@ -5,33 +5,21 @@ import (
 	"fmt"
 	"sync"
 
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 )
 
-type ActionDescription struct {
-	ActionID         string
-	Description      string
-	Message          string
-	VendorName       string
-	VendorURL        string
-	IconName         string
-	ImplicitAny      uint32
-	ImplicitInactive uint32
-	ImplicitActive   uint32
-	Annotations      map[string]string
-}
-
 type Actions struct {
-	conn   *dbus.Conn
-	locale string
+	authority libpolkit.Authority
+	locale    string
 
 	mu         sync.Mutex
 	generation uint64
-	known      map[string]ActionDescription
+	known      map[string]libpolkit.ActionDescription
 }
 
 func NewActions(conn *dbus.Conn, locale string) *Actions {
-	return &Actions{conn: conn, locale: locale}
+	return &Actions{authority: libpolkit.NewAuthority(conn), locale: locale}
 }
 
 func (a *Actions) Forget() {
@@ -41,14 +29,14 @@ func (a *Actions) Forget() {
 	a.known = nil
 }
 
-func (a *Actions) Lookup(ctx context.Context, id string) (ActionDescription, error) {
+func (a *Actions) Lookup(ctx context.Context, id string) (libpolkit.ActionDescription, error) {
 	a.mu.Lock()
 	known, generation := a.known, a.generation
 	a.mu.Unlock()
 	if known == nil {
 		var err error
 		if known, err = a.enumerate(ctx); err != nil {
-			return ActionDescription{}, err
+			return libpolkit.ActionDescription{}, err
 		}
 		a.mu.Lock()
 		if a.generation == generation {
@@ -58,17 +46,17 @@ func (a *Actions) Lookup(ctx context.Context, id string) (ActionDescription, err
 	}
 	d, ok := known[id]
 	if !ok {
-		return ActionDescription{}, fmt.Errorf("action %s is not registered with polkitd", id)
+		return libpolkit.ActionDescription{}, fmt.Errorf("action %s is not registered with polkitd", id)
 	}
 	return d, nil
 }
 
-func (a *Actions) enumerate(ctx context.Context) (map[string]ActionDescription, error) {
-	var all []ActionDescription
-	if err := callAuthority(ctx, a.conn, "EnumerateActions", a.locale).Store(&all); err != nil {
-		return nil, fmt.Errorf("enumerate polkit actions for locale %s: %w", a.locale, err)
+func (a *Actions) enumerate(ctx context.Context) (map[string]libpolkit.ActionDescription, error) {
+	all, err := a.authority.EnumerateActions(ctx, a.locale)
+	if err != nil {
+		return nil, err
 	}
-	known := make(map[string]ActionDescription, len(all))
+	known := make(map[string]libpolkit.ActionDescription, len(all))
 	for _, d := range all {
 		known[d.ActionID] = d
 	}

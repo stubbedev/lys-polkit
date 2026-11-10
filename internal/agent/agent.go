@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
 	"github.com/stubbedev/lys-lib/portaldialogs"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
@@ -44,7 +45,7 @@ type Config struct {
 	// first when it is offered.
 	SessionUser polkit.UID
 	Actions     interface {
-		Lookup(ctx context.Context, id string) (polkit.ActionDescription, error)
+		Lookup(ctx context.Context, id string) (libpolkit.ActionDescription, error)
 	}
 	ProcessName func(polkit.PID) (string, error)
 	Catalog     locale.Catalog
@@ -84,10 +85,10 @@ func (a *Agent) Close() {
 }
 
 func failed(format string, args ...any) *dbus.Error {
-	return dbus.NewError(polkit.ErrFailed, []any{fmt.Sprintf(format, args...)})
+	return dbus.NewError(libpolkit.ErrFailed, []any{fmt.Sprintf(format, args...)})
 }
 
-var cancelled = dbus.NewError(polkit.ErrCancelled, []any{"Authentication was cancelled"})
+var cancelled = dbus.NewError(libpolkit.ErrCancelled, []any{"Authentication was cancelled"})
 
 // BeginAuthentication authenticates one of identities for cookie and
 // returns once the helper reported success to polkitd, the user or

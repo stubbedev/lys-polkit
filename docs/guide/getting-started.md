@@ -38,6 +38,6 @@ journalctl --user -u lys-polkit
 
 | Message starts with | Meaning |
 | --- | --- |
-| `register polkit agent for unix-session` | polkitd refused the registration, usually because another agent serves the session. polkitd's reason follows. |
+| `polkit: register the agent at /dev/stubbe/lys/PolicyKit1/AuthenticationAgent for unix-session` | polkitd refused the registration, usually because another agent serves the session. polkitd's reason follows. |
 | `uid N has no display session in logind` | Running outside a session, and the user has no display session. |
-| `connect to the system bus` / `connect to the session bus` | That bus is unreachable. |
+| `polkit: connect to the system bus` / `connect to the session bus` | That bus is unreachable. |

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/stubbedev/lys-lib/dbustest"
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
+	"github.com/stubbedev/lys-lib/polkit/polkittest"
 	"github.com/stubbedev/lys-lib/portaldialogs"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
@@ -22,7 +24,6 @@ import (
 	"github.com/stubbedev/lys-polkit/internal/helper/helpertest"
 	"github.com/stubbedev/lys-polkit/internal/locale"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
-	"github.com/stubbedev/lys-polkit/internal/polkit/polkittest"
 )
 
 func TestMain(m *testing.M) {
@@ -123,7 +124,7 @@ func start(t *testing.T, s setup) *env {
 		}
 	}
 	auth := polkittest.New()
-	auth.Actions = []polkit.ActionDescription{polkittest.ExecAction}
+	auth.Actions = []libpolkit.ActionDescription{polkittest.ExecAction}
 	auth.FailActions = s.failActions
 	release := auth.Serve(t, bus.Conn(t))
 	fake := helpertest.New(t, s.scenario)
@@ -153,7 +154,7 @@ func start(t *testing.T, s setup) *env {
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
 	go func() {
-		served <- polkit.Serve(ctx, agentConn, polkit.Registration{Subject: polkit.SessionSubject("c2"), Locale: "C"}, a, changed)
+		served <- polkit.Serve(ctx, agentConn, polkit.Registration{Subject: libpolkit.UnixSession{ID: "c2"}, Locale: "C"}, a, changed)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -193,14 +194,14 @@ func (e *env) begin(cookie string, ids ...polkit.Identity) <-chan error {
 	e.t.Helper()
 	done := make(chan error, 1)
 	go func() {
-		done <- e.caller.Object(e.agentName, polkit.AgentPath).Call(polkit.AgentIface+".BeginAuthentication", 0,
+		done <- e.caller.Object(e.agentName, polkit.AgentPath).Call(libpolkit.AgentInterface+".BeginAuthentication", 0,
 			polkittest.ExecAction.ActionID, "Authenticate to test", "dialog-password", details, cookie, ids).Err
 	}()
 	return done
 }
 
 func (e *env) cancel(cookie string) error {
-	return e.caller.Object(e.agentName, polkit.AgentPath).Call(polkit.AgentIface+".CancelAuthentication", 0, cookie).Err
+	return e.caller.Object(e.agentName, polkit.AgentPath).Call(libpolkit.AgentInterface+".CancelAuthentication", 0, cookie).Err
 }
 
 func (e *env) next() call {
@@ -364,7 +365,7 @@ func TestUserCancel(t *testing.T) {
 	done := e.begin("cookie-1", unixUser(alice))
 	e.expect("Authenticate")
 	e.reply(portaldialogs.AuthCancel{})
-	wantError(t, result(t, done), polkit.ErrCancelled, "cancelled")
+	wantError(t, result(t, done), libpolkit.ErrCancelled, "cancelled")
 	e.expect("Dismiss")
 	e.fake.AssertNoneLeft(t)
 }
@@ -378,7 +379,7 @@ func TestUserCancelWhileNoPromptWaits(t *testing.T) {
 	if err := e.emitter.AuthAction(c.caller.Handle, portaldialogs.AuthCancel{}); err != nil {
 		t.Fatalf("signal cancel: %v", err)
 	}
-	wantError(t, result(t, done), polkit.ErrCancelled, "cancelled")
+	wantError(t, result(t, done), libpolkit.ErrCancelled, "cancelled")
 	e.expect("Dismiss")
 	e.fake.AssertNoneLeft(t)
 }
@@ -401,7 +402,7 @@ func TestCancelAuthenticationDuringUserLookup(t *testing.T) {
 	if err := e.cancel("cookie-1"); err != nil {
 		t.Fatalf("CancelAuthentication: %v", err)
 	}
-	wantError(t, result(t, done), polkit.ErrCancelled, "cancelled")
+	wantError(t, result(t, done), libpolkit.ErrCancelled, "cancelled")
 	if n := e.fake.Started(t); n != 0 {
 		t.Errorf("%d helpers started, want none", n)
 	}
@@ -416,7 +417,7 @@ func TestCancelAuthenticationRunning(t *testing.T) {
 	if err := e.cancel("cookie-1"); err != nil {
 		t.Fatalf("CancelAuthentication: %v", err)
 	}
-	wantError(t, result(t, done), polkit.ErrCancelled, "cancelled")
+	wantError(t, result(t, done), libpolkit.ErrCancelled, "cancelled")
 	if d := e.expect("Dismiss"); d.caller.Handle != c.caller.Handle {
 		t.Errorf("dismissed %s, want %s", d.caller.Handle, c.caller.Handle)
 	}
@@ -442,7 +443,7 @@ func TestCancelAuthenticationQueued(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	wantError(t, result(t, queued), polkit.ErrCancelled, "cancelled")
+	wantError(t, result(t, queued), libpolkit.ErrCancelled, "cancelled")
 
 	e.reply(answer(helpertest.Password))
 	if err := result(t, first); err != nil {
@@ -456,7 +457,7 @@ func TestCancelAuthenticationQueued(t *testing.T) {
 	if err := e.cancel("cookie-3"); err != nil {
 		t.Fatalf("CancelAuthentication(cookie-3): %v", err)
 	}
-	wantError(t, result(t, third), polkit.ErrCancelled, "cancelled")
+	wantError(t, result(t, third), libpolkit.ErrCancelled, "cancelled")
 	e.expect("Dismiss")
 	if n := e.fake.Started(t); n != 2 {
 		t.Errorf("%d helper sessions, want 2: the cancelled request never ran", n)
@@ -482,7 +483,7 @@ func TestRefusals(t *testing.T) {
 			t.Parallel()
 
 			e := start(t, setup{scenario: helpertest.Answer, sessionUser: alice})
-			wantError(t, result(t, e.begin("cookie-1", tc.ids...)), polkit.ErrFailed, tc.want)
+			wantError(t, result(t, e.begin("cookie-1", tc.ids...)), libpolkit.ErrFailed, tc.want)
 			if n := e.fake.Started(t); n != 0 {
 				t.Errorf("%d helper sessions for a refused request", n)
 			}
@@ -494,7 +495,7 @@ func TestDialogsAbsentFails(t *testing.T) {
 	t.Parallel()
 
 	e := start(t, setup{scenario: helpertest.Answer, sessionUser: alice, noDialogs: true})
-	wantError(t, result(t, e.begin("cookie-1", unixUser(alice))), polkit.ErrFailed, portaldialogs.ServiceName)
+	wantError(t, result(t, e.begin("cookie-1", unixUser(alice))), libpolkit.ErrFailed, portaldialogs.ServiceName)
 	if n := e.fake.Started(t); n != 0 {
 		t.Errorf("%d helper sessions without the dialogs, want none", n)
 	}
@@ -533,7 +534,7 @@ func TestActionsEnumeratedOncePerAuthority(t *testing.T) {
 
 	e.release()
 	restarted := polkittest.New()
-	restarted.Actions = []polkit.ActionDescription{polkittest.ExecAction}
+	restarted.Actions = []libpolkit.ActionDescription{polkittest.ExecAction}
 	restarted.Serve(t, e.bus.Conn(t))
 	e.registered(restarted)
 	e.changed()
@@ -569,7 +570,7 @@ func TestGoneCallerShowsItsPID(t *testing.T) {
 	e := start(t, setup{scenario: helpertest.InfoOnly, sessionUser: alice})
 	done := make(chan error, 1)
 	go func() {
-		done <- e.caller.Object(e.agentName, polkit.AgentPath).Call(polkit.AgentIface+".BeginAuthentication", 0,
+		done <- e.caller.Object(e.agentName, polkit.AgentPath).Call(libpolkit.AgentInterface+".BeginAuthentication", 0,
 			polkittest.ExecAction.ActionID, "Authenticate to test", "", map[string]string{"polkit.caller-pid": "4711"}, "cookie-1", []polkit.Identity{unixUser(alice)}).Err
 	}()
 	c := e.expect("ShowAuthentication")
@@ -629,7 +630,7 @@ func TestOnlySuccessReportsAnAuthorization(t *testing.T) {
 	done := e.begin(helpertest.Cookie, unixUser(alice))
 	e.expect("Authenticate")
 	e.reply(portaldialogs.AuthCancel{})
-	wantError(t, result(t, done), polkit.ErrCancelled, "cancelled")
+	wantError(t, result(t, done), libpolkit.ErrCancelled, "cancelled")
 	e.expect("Dismiss")
 	if n := e.authorized.Load(); n != 0 {
 		t.Errorf("%d authorizations reported after a cancel, want none", n)

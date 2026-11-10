@@ -4,32 +4,25 @@ import (
 	"context"
 	"fmt"
 
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
 	"github.com/stubbedev/lys-polkit/retained"
 )
 
-type TemporaryAuthorization struct {
-	ID       string
-	ActionID string
-	Subject  Subject
-	Obtained uint64
-	Expires  uint64
-}
-
 type Temporary struct {
-	conn    *dbus.Conn
-	subject Subject
+	authority libpolkit.Authority
+	subject   libpolkit.Subject
 }
 
-func NewTemporary(conn *dbus.Conn, subject Subject) *Temporary {
-	return &Temporary{conn: conn, subject: subject}
+func NewTemporary(conn *dbus.Conn, subject libpolkit.Subject) *Temporary {
+	return &Temporary{authority: libpolkit.NewAuthority(conn), subject: subject}
 }
 
 func (t *Temporary) List(ctx context.Context) ([]retained.Authorization, error) {
-	var all []TemporaryAuthorization
-	if err := callAuthority(ctx, t.conn, "EnumerateTemporaryAuthorizations", t.subject).Store(&all); err != nil {
-		return nil, fmt.Errorf("enumerate temporary authorizations of %s: %w", t.subject, err)
+	all, err := t.authority.EnumerateTemporaryAuthorizations(ctx, t.subject)
+	if err != nil {
+		return nil, err
 	}
 	list := make([]retained.Authorization, len(all))
 	for i, a := range all {
@@ -48,15 +41,9 @@ func (t *Temporary) List(ctx context.Context) ([]retained.Authorization, error) 
 }
 
 func (t *Temporary) RevokeAll(ctx context.Context) error {
-	if err := callAuthority(ctx, t.conn, "RevokeTemporaryAuthorizations", t.subject).Err; err != nil {
-		return fmt.Errorf("revoke the temporary authorizations of %s: %w", t.subject, err)
-	}
-	return nil
+	return t.authority.RevokeTemporaryAuthorizations(ctx, t.subject)
 }
 
 func (t *Temporary) Revoke(ctx context.Context, id string) error {
-	if err := callAuthority(ctx, t.conn, "RevokeTemporaryAuthorizationById", id).Err; err != nil {
-		return fmt.Errorf("revoke temporary authorization %s: %w", id, err)
-	}
-	return nil
+	return t.authority.RevokeTemporaryAuthorizationByID(ctx, id)
 }

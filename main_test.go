@@ -13,9 +13,10 @@ import (
 	"github.com/stubbedev/lys-lib/dbustest"
 	"github.com/stubbedev/lys-lib/logind"
 	"github.com/stubbedev/lys-lib/logind/logindtest"
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
+	"github.com/stubbedev/lys-lib/polkit/polkittest"
 
 	"github.com/stubbedev/lys-polkit/internal/polkit"
-	"github.com/stubbedev/lys-polkit/internal/polkit/polkittest"
 	"github.com/stubbedev/lys-polkit/retained"
 )
 
@@ -101,7 +102,7 @@ func TestExitsNonZeroWhenRefused(t *testing.T) {
 	t.Parallel()
 
 	auth := polkittest.New()
-	auth.Preregister(polkit.SessionSubject(display))
+	auth.Preregister(libpolkit.UnixSession{ID: display})
 	cmd, stderr, _ := startAgent(t, auth)
 	err := cmd.Wait()
 	if exit, ok := errors.AsType[*exec.ExitError](err); !ok || exit.ExitCode() == 0 {
@@ -162,7 +163,7 @@ func TestRevokeGivesUpTheRetainedAuthorizations(t *testing.T) {
 	t.Parallel()
 
 	auth := polkittest.New()
-	auth.SetTemporary([]polkit.TemporaryAuthorization{{ID: "tmpauthz0", ActionID: "org.example.keep", Subject: polkit.SessionSubject(display), Obtained: 1, Expires: 301}})
+	auth.SetTemporary([]libpolkit.TemporaryAuthorization{{ID: "tmpauthz0", ActionID: "org.example.keep", Subject: polkittest.Wire(t, libpolkit.UnixSession{ID: display}), Obtained: 1, Expires: 301}})
 	_, _, session := startAgent(t, auth)
 	next(t, auth)
 	conn := session.Conn(t)

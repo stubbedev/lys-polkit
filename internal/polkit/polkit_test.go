@@ -10,10 +10,11 @@ import (
 	"github.com/stubbedev/lys-lib/dbustest"
 	"github.com/stubbedev/lys-lib/logind"
 	"github.com/stubbedev/lys-lib/logind/logindtest"
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
+	"github.com/stubbedev/lys-lib/polkit/polkittest"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
 	"github.com/stubbedev/lys-polkit/internal/polkit"
-	"github.com/stubbedev/lys-polkit/internal/polkit/polkittest"
 )
 
 const eventTimeout = 5 * time.Second
@@ -136,13 +137,13 @@ func TestServeRefusedForASecondAgent(t *testing.T) {
 
 	bus := dbustest.Start(t)
 	auth := polkittest.New()
-	subject := polkit.SessionSubject("c2")
+	subject := libpolkit.UnixSession{ID: "c2"}
 	auth.Preregister(subject)
 	auth.Serve(t, bus.Conn(t))
 
 	err := polkit.Serve(t.Context(), bus.Conn(t), polkit.Registration{Subject: subject, Locale: "C"}, agent{}, func() {})
 	var derr dbus.Error
-	if !errors.As(err, &derr) || derr.Name != polkit.ErrFailed || !strings.Contains(err.Error(), polkittest.AlreadyExists) {
+	if !errors.As(err, &derr) || derr.Name != libpolkit.ErrFailed || !strings.Contains(err.Error(), polkittest.AlreadyExists) {
 		t.Fatalf("Serve = %v, want polkit's %q", err, polkittest.AlreadyExists)
 	}
 }
@@ -154,7 +155,7 @@ func TestServeReregistersWithANewAuthority(t *testing.T) {
 	first := polkittest.New()
 	release := first.Serve(t, bus.Conn(t))
 	conn := bus.Conn(t)
-	r := polkit.Registration{Subject: polkit.SessionSubject("c2"), Locale: "C"}
+	r := polkit.Registration{Subject: libpolkit.UnixSession{ID: "c2"}, Locale: "C"}
 	s := serve(t, conn, r)
 	if got := next(t, first); !got.Register {
 		t.Fatalf("first Authority saw %+v, want a registration", got)
@@ -214,7 +215,7 @@ func TestServeReportsRegistrationsAndChanges(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		done <- polkit.Serve(ctx, conn, polkit.Registration{Subject: polkit.SessionSubject("c2"), Locale: "C"}, agent{}, func() { changes <- struct{}{} })
+		done <- polkit.Serve(ctx, conn, polkit.Registration{Subject: libpolkit.UnixSession{ID: "c2"}, Locale: "C"}, agent{}, func() { changes <- struct{}{} })
 	}()
 	change := func(why string) {
 		t.Helper()
@@ -227,7 +228,7 @@ func TestServeReportsRegistrationsAndChanges(t *testing.T) {
 	next(t, first)
 	change("after the registration")
 
-	if err := authorityConn.Emit(polkit.AuthorityPath, polkit.AuthorityIface+".Changed"); err != nil {
+	if err := authorityConn.Emit(libpolkit.AuthorityPath, libpolkit.Changed.Name()); err != nil {
 		t.Fatalf("emit Changed from a peer that is not polkitd: %v", err)
 	}
 	release()

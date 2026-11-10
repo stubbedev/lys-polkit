@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/stubbedev/lys-lib/dbustest"
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
+	"github.com/stubbedev/lys-lib/polkit/polkittest"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
 	"github.com/stubbedev/lys-polkit/internal/polkit"
-	"github.com/stubbedev/lys-polkit/internal/polkit/polkittest"
 	"github.com/stubbedev/lys-polkit/internal/tracker"
 	"github.com/stubbedev/lys-polkit/retained"
 )
@@ -92,7 +93,7 @@ type env struct {
 	spare     *dbus.Conn
 }
 
-var subject = polkit.SessionSubject("c2")
+var subject = libpolkit.UnixSession{ID: "c2"}
 
 func start(t *testing.T) *env {
 	t.Helper()
@@ -162,8 +163,8 @@ func (e *env) armed() time.Duration {
 	}
 }
 
-func keep(id string, obtained, expires time.Time) polkit.TemporaryAuthorization {
-	return polkit.TemporaryAuthorization{ID: id, ActionID: "org.example.keep", Subject: subject, Obtained: uint64(obtained.Unix()), Expires: uint64(expires.Unix())}
+func (e *env) keep(id string, obtained, expires time.Time) libpolkit.TemporaryAuthorization {
+	return libpolkit.TemporaryAuthorization{ID: id, ActionID: "org.example.keep", Subject: polkittest.Wire(e.t, subject), Obtained: uint64(obtained.Unix()), Expires: uint64(expires.Unix())}
 }
 
 func want(id string, obtained, expires time.Time) retained.Authorization {
@@ -208,7 +209,7 @@ func TestListFollowsChangedAndExpiry(t *testing.T) {
 	}
 
 	early, late := epoch.Add(4*time.Minute), epoch.Add(5*time.Minute)
-	e.authority.SetTemporary([]polkit.TemporaryAuthorization{keep("tmpauthz1", epoch, late), keep("tmpauthz0", epoch.Add(-time.Minute), early)})
+	e.authority.SetTemporary([]libpolkit.TemporaryAuthorization{e.keep("tmpauthz1", epoch, late), e.keep("tmpauthz0", epoch.Add(-time.Minute), early)})
 	if err := e.authority.EmitChanged(); err != nil {
 		t.Fatalf("emit Changed: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestListFollowsChangedAndExpiry(t *testing.T) {
 		t.Errorf("Authorizations = %+v, %v; want %+v", got, err, wantList)
 	}
 
-	e.authority.SetTemporary([]polkit.TemporaryAuthorization{keep("tmpauthz1", epoch, late)})
+	e.authority.SetTemporary([]libpolkit.TemporaryAuthorization{e.keep("tmpauthz1", epoch, late)})
 	e.clock.fire(t, early.Add(time.Second))
 	if got := e.next(); !reflect.DeepEqual(got, wantList[1:]) {
 		t.Fatalf("after the first expiry published %+v, want %+v", got, wantList[1:])
@@ -265,7 +266,7 @@ func TestRestartedPolkitdIsReadAgain(t *testing.T) {
 	e.next()
 	e.release()
 	restarted := polkittest.New()
-	restarted.SetTemporary([]polkit.TemporaryAuthorization{keep("tmpauthz0", epoch, epoch.Add(time.Minute))})
+	restarted.SetTemporary([]libpolkit.TemporaryAuthorization{e.keep("tmpauthz0", epoch, epoch.Add(time.Minute))})
 	restarted.Serve(t, e.spare)
 	if got, wantList := e.next(), []retained.Authorization{want("tmpauthz0", epoch, epoch.Add(time.Minute))}; !reflect.DeepEqual(got, wantList) {
 		t.Fatalf("after the restart published %+v, want %+v", got, wantList)
@@ -280,7 +281,7 @@ func TestRevokeForwardsToPolkitd(t *testing.T) {
 
 	e := start(t)
 	e.next()
-	e.authority.SetTemporary([]polkit.TemporaryAuthorization{keep("tmpauthz0", epoch, epoch.Add(time.Minute)), keep("tmpauthz1", epoch, epoch.Add(2*time.Minute))})
+	e.authority.SetTemporary([]libpolkit.TemporaryAuthorization{e.keep("tmpauthz0", epoch, epoch.Add(time.Minute)), e.keep("tmpauthz1", epoch, epoch.Add(2*time.Minute))})
 	e.tracker.Refresh()
 	if got := e.next(); len(got) != 2 {
 		t.Fatalf("published %+v, want two", got)

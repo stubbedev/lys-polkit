@@ -1,73 +1,37 @@
 // Package polkit is lys-polkit's side of polkitd's D-Bus API: the
-// Authority it registers with and the AuthenticationAgent interface it
-// exports, kept registered for the session across polkitd restarts.
+// AuthenticationAgent interface it exports, kept registered with the
+// Authority for the session across polkitd restarts.
 package polkit
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/stubbedev/lys-lib/dbusx"
 	"github.com/stubbedev/lys-lib/logind"
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 )
 
-// D-Bus identity of polkitd's Authority, and of the agent lys-polkit
-// exports.
-const (
-	AuthorityName  = "org.freedesktop.PolicyKit1"
-	AuthorityPath  = dbus.ObjectPath("/org/freedesktop/PolicyKit1/Authority")
-	AuthorityIface = "org.freedesktop.PolicyKit1.Authority"
-	AgentIface     = "org.freedesktop.PolicyKit1.AuthenticationAgent"
-	AgentPath      = dbus.ObjectPath("/dev/stubbe/lys/PolicyKit1/AuthenticationAgent")
-)
-
-// Error names polkitd understands from an agent (polkiterror.c).
-const (
-	ErrFailed    = "org.freedesktop.PolicyKit1.Error.Failed"
-	ErrCancelled = "org.freedesktop.PolicyKit1.Error.Cancelled"
-)
-
-// callTimeout bounds each call to polkitd. A registration is not cut
-// short by the end of Serve's context, so an agent told to stop while
-// registering still unregisters what polkitd registered.
-const callTimeout = 5 * time.Second
-
-// Subject is a polkit subject, (sa{sv}): its kind and its details.
-type Subject struct {
-	Kind    string
-	Details map[string]dbus.Variant
-}
-
-// SessionSubject is the unix-session subject for a logind session.
-func SessionSubject(id logind.SessionID) Subject {
-	return Subject{Kind: "unix-session", Details: map[string]dbus.Variant{"session-id": dbus.MakeVariant(string(id))}}
-}
+// AgentPath is where lys-polkit exports its agent.
+const AgentPath = dbus.ObjectPath("/dev/stubbe/lys/PolicyKit1/AuthenticationAgent")
 
 // CallerSubject is the session subject polkitd attributes the calling
 // process to, asking logind on system: the process's own session when
 // it is in one, else its user's display session. A user service runs
 // outside any session, so polkitd resolves it through the display
 // session, and an agent registering for any other session is refused.
-func CallerSubject(ctx context.Context, system *dbus.Conn) (Subject, error) {
+func CallerSubject(ctx context.Context, system *dbus.Conn) (libpolkit.UnixSession, error) {
 	session, err := logind.NewManager(system).GetSession(ctx, logind.AutoSession)
 	if err != nil {
-		return Subject{}, err
+		return libpolkit.UnixSession{}, err
 	}
 	id, err := session.ID(ctx)
 	if err != nil {
-		return Subject{}, err
+		return libpolkit.UnixSession{}, err
 	}
-	return SessionSubject(id), nil
-}
-
-func (s Subject) String() string {
-	if id, ok := s.Details["session-id"]; ok {
-		return fmt.Sprintf("%s %v", s.Kind, id.Value())
-	}
-	return s.Kind
+	return libpolkit.UnixSession{ID: id}, nil
 }
 
 // localeVars are the variables naming the message locale, most
@@ -92,19 +56,21 @@ func Locale(getenv func(string) string) string {
 
 // Registration is what an agent registers with polkitd.
 type Registration struct {
-	Subject Subject
+	Subject libpolkit.Subject
 	Locale  string
 }
 
 // Serve exports agent (an object with polkit's BeginAuthentication and
 // CancelAuthentication methods) at AgentPath and registers it for
 // r.Subject, again each time org.freedesktop.PolicyKit1 gains a new
-// owner, until ctx ends; then it unregisters. Any refusal, such as
-// another agent already registered for the subject, ends Serve with
-// polkitd's error. changed runs on Serve's goroutine after each
+// owner, until ctx ends; then it unregisters. A registration is not
+// cut short by the end of ctx, so an agent told to stop while
+// registering still unregisters what polkitd registered. Any refusal,
+// such as another agent already registered for the subject, ends Serve
+// with polkitd's error. changed runs on Serve's goroutine after each
 // registration and on each of the Authority's Changed signals.
 func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any, changed func()) error {
-	unexport, err := dbusx.Export(conn, AgentPath, dbusx.Interface{Name: AgentIface, Methods: agent})
+	unexport, err := dbusx.Export(conn, AgentPath, dbusx.Interface{Name: libpolkit.AgentInterface, Methods: agent})
 	if err != nil {
 		return fmt.Errorf("export polkit agent at %s: %w", AgentPath, err)
 	}
@@ -113,15 +79,17 @@ func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any, chan
 	signals := make(chan *dbus.Signal, 16)
 	conn.Signal(signals)
 	defer conn.RemoveSignal(signals)
-	for _, match := range [][]dbus.MatchOption{dbusx.OwnerMatch(AuthorityName), changedMatch} {
+	for _, match := range [][]dbus.MatchOption{dbusx.OwnerMatch(libpolkit.BusName), libpolkit.ChangedMatch()} {
 		if err := conn.AddMatchSignalContext(ctx, match...); err != nil {
-			return fmt.Errorf("watch %s: %w", AuthorityName, err)
+			return fmt.Errorf("watch %s: %w", libpolkit.BusName, err)
 		}
 		defer func() { _ = conn.RemoveMatchSignal(match...) }()
 	}
 
+	authority := libpolkit.NewAuthority(conn)
+	changedSignal := libpolkit.Changed.Name()
 	calls := context.WithoutCancel(ctx)
-	registered, err := register(calls, conn, r)
+	registered, err := authority.RegisterAuthenticationAgent(calls, r.Subject, r.Locale, AgentPath)
 	if err != nil {
 		return err
 	}
@@ -129,56 +97,22 @@ func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any, chan
 	for {
 		select {
 		case <-ctx.Done():
-			return unregister(calls, conn, r.Subject)
+			return authority.UnregisterAuthenticationAgent(calls, r.Subject, AgentPath)
 		case sig, ok := <-signals:
 			if !ok {
 				return errors.New("system bus connection closed")
 			}
-			if sig.Path == AuthorityPath && sig.Name == changedSignal {
+			if sig.Path == libpolkit.AuthorityPath && sig.Name == changedSignal {
 				changed()
 				continue
 			}
-			if _, owner, isAuthority := dbusx.NameOwnerChange(sig, AuthorityName); !isAuthority || owner == "" || sig.Sequence <= registered {
+			if _, owner, isAuthority := dbusx.NameOwnerChange(sig, libpolkit.BusName); !isAuthority || owner == "" || sig.Sequence <= registered {
 				continue
 			}
-			if registered, err = register(calls, conn, r); err != nil {
+			if registered, err = authority.RegisterAuthenticationAgent(calls, r.Subject, r.Locale, AgentPath); err != nil {
 				return err
 			}
 			changed()
 		}
 	}
-}
-
-const changedSignal = AuthorityIface + ".Changed"
-
-var changedMatch = []dbus.MatchOption{
-	dbus.WithMatchSender(AuthorityName),
-	dbus.WithMatchObjectPath(AuthorityPath),
-	dbus.WithMatchInterface(AuthorityIface),
-	dbus.WithMatchMember("Changed"),
-}
-
-// register registers the agent and returns the sequence of polkitd's
-// reply: an owner change sequenced before it happened before the
-// registration (polkitd's own activation by it), one after it is a
-// polkitd that has not seen the agent.
-func register(ctx context.Context, conn *dbus.Conn, r Registration) (dbus.Sequence, error) {
-	call := callAuthority(ctx, conn, "RegisterAuthenticationAgent", r.Subject, r.Locale, string(AgentPath))
-	if call.Err != nil {
-		return dbus.NoSequence, fmt.Errorf("register polkit agent for %s: %w", r.Subject, call.Err)
-	}
-	return call.ResponseSequence, nil
-}
-
-func unregister(ctx context.Context, conn *dbus.Conn, subject Subject) error {
-	if err := callAuthority(ctx, conn, "UnregisterAuthenticationAgent", subject, string(AgentPath)).Err; err != nil {
-		return fmt.Errorf("unregister polkit agent for %s: %w", subject, err)
-	}
-	return nil
-}
-
-func callAuthority(ctx context.Context, conn *dbus.Conn, method string, args ...any) *dbus.Call {
-	ctx, cancel := context.WithTimeout(ctx, callTimeout)
-	defer cancel()
-	return conn.Object(AuthorityName, AuthorityPath).CallWithContext(ctx, AuthorityIface+"."+method, 0, args...)
 }

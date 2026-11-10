@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/stubbedev/lys-lib/intconv"
+	libpolkit "github.com/stubbedev/lys-lib/polkit"
 	"github.com/stubbedev/lys-lib/portaldialogs"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
@@ -140,9 +141,9 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	system, err := dbus.ConnectSystemBus()
+	system, err := libpolkit.Dial(ctx)
 	if err != nil {
-		return fmt.Errorf("connect to the system bus: %w", err)
+		return err
 	}
 	defer func() { _ = system.Close() }()
 	session, err := dbus.ConnectSessionBus()
