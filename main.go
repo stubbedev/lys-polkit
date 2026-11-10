@@ -22,7 +22,6 @@ import (
 	"github.com/stubbedev/lys-polkit/internal/agent"
 	"github.com/stubbedev/lys-polkit/internal/helper"
 	"github.com/stubbedev/lys-polkit/internal/locale"
-	"github.com/stubbedev/lys-polkit/internal/logind"
 	"github.com/stubbedev/lys-polkit/internal/passwd"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
 	"github.com/stubbedev/lys-polkit/internal/proc"
@@ -156,11 +155,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("uid %d: %w", os.Getuid(), err)
 	}
-	pid, err := intconv.Exact[uint32](os.Getpid())
-	if err != nil {
-		return fmt.Errorf("pid %d: %w", os.Getpid(), err)
-	}
-	id, err := logind.Session(ctx, system, pid, uid)
+	subject, err := polkit.CallerSubject(ctx, system)
 	if err != nil {
 		return err
 	}
@@ -168,7 +163,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r := polkit.Registration{Subject: polkit.SessionSubject(id), Locale: polkit.Locale(os.Getenv)}
+	r := polkit.Registration{Subject: subject, Locale: polkit.Locale(os.Getenv)}
 	actions := polkit.NewActions(system, r.Locale)
 	temporary := polkit.NewTemporary(system, r.Subject)
 	server, release, err := retained.Serve(session, temporary)

@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/stubbedev/lys-lib/dbustest"
+	"github.com/stubbedev/lys-lib/logind"
+	"github.com/stubbedev/lys-lib/logind/logindtest"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
 
-	"github.com/stubbedev/lys-polkit/internal/logind"
-	"github.com/stubbedev/lys-polkit/internal/logind/logindtest"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
 	"github.com/stubbedev/lys-polkit/internal/polkit/polkittest"
 )
@@ -65,25 +65,23 @@ func (s served) wait(t *testing.T) error {
 func TestServeRegistersTheResolvedSession(t *testing.T) {
 	t.Parallel()
 
-	tty := logind.SessionRef{ID: "c2", Path: "/org/freedesktop/login1/session/c2"}
-	display := logind.SessionRef{ID: "3", Path: "/org/freedesktop/login1/session/_33"}
 	tests := []struct {
 		name        string
-		logind      logindtest.Logind
+		logind      logindtest.Config
 		env         map[string]string
 		wantSubject string
 		wantLocale  string
 	}{
 		{
 			name:        "inside a session",
-			logind:      logindtest.Logind{Own: tty, Display: display},
+			logind:      logindtest.Config{Own: "c2", Display: "3"},
 			env:         map[string]string{"LC_MESSAGES": "da_DK.UTF-8", "LANG": "en_US.UTF-8"},
 			wantSubject: "unix-session c2",
 			wantLocale:  "da_DK.UTF-8",
 		},
 		{
 			name:        "outside any session",
-			logind:      logindtest.Logind{Display: display},
+			logind:      logindtest.Config{Display: "3"},
 			env:         map[string]string{"LANG": "en_GB.UTF-8"},
 			wantSubject: "unix-session 3",
 			wantLocale:  "en_GB.UTF-8",
@@ -94,16 +92,16 @@ func TestServeRegistersTheResolvedSession(t *testing.T) {
 			t.Parallel()
 
 			bus := dbustest.Start(t)
-			tc.logind.Serve(t, bus.Conn(t))
+			logindtest.Serve(t, bus, tc.logind)
 			auth := polkittest.New()
 			auth.Serve(t, bus.Conn(t))
 			conn := bus.Conn(t)
 
-			id, err := logind.Session(t.Context(), conn, 42, 1000)
+			subject, err := polkit.CallerSubject(t.Context(), conn)
 			if err != nil {
-				t.Fatalf("Session: %v", err)
+				t.Fatalf("CallerSubject: %v", err)
 			}
-			r := polkit.Registration{Subject: polkit.SessionSubject(id), Locale: polkit.Locale(func(k string) string { return tc.env[k] })}
+			r := polkit.Registration{Subject: subject, Locale: polkit.Locale(func(k string) string { return tc.env[k] })}
 			s := serve(t, conn, r)
 
 			want := polkittest.Event{Register: true, Sender: conn.Names()[0], Subject: tc.wantSubject, Locale: tc.wantLocale, Path: string(polkit.AgentPath)}
@@ -118,6 +116,18 @@ func TestServeRegistersTheResolvedSession(t *testing.T) {
 				t.Errorf("after cancel %+v, want %s unregistered", got, tc.wantSubject)
 			}
 		})
+	}
+}
+
+func TestCallerSubjectWithoutASessionKeepsLogindsError(t *testing.T) {
+	t.Parallel()
+
+	bus := dbustest.Start(t)
+	logindtest.Serve(t, bus, logindtest.Config{})
+	_, err := polkit.CallerSubject(t.Context(), bus.Conn(t))
+	var derr dbus.Error
+	if !errors.As(err, &derr) || derr.Name != logind.ErrNoSuchSession {
+		t.Fatalf("CallerSubject = %v, want logind's %s", err, logind.ErrNoSuchSession)
 	}
 }
 

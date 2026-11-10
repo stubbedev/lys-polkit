@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/stubbedev/lys-lib/dbustest"
+	"github.com/stubbedev/lys-lib/logind"
+	"github.com/stubbedev/lys-lib/logind/logindtest"
 
-	"github.com/stubbedev/lys-polkit/internal/logind"
-	"github.com/stubbedev/lys-polkit/internal/logind/logindtest"
 	"github.com/stubbedev/lys-polkit/internal/polkit"
 	"github.com/stubbedev/lys-polkit/internal/polkit/polkittest"
 	"github.com/stubbedev/lys-polkit/retained"
@@ -24,7 +24,7 @@ const (
 	eventTimeout = 5 * time.Second
 )
 
-var display = logind.SessionRef{ID: "3", Path: "/org/freedesktop/login1/session/_33"}
+const display logind.SessionID = "3"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(processEnv) != "" {
@@ -51,7 +51,7 @@ func startAgent(t *testing.T, auth *polkittest.Authority) (*exec.Cmd, *bytes.Buf
 	t.Helper()
 	system := dbustest.Start(t)
 	session := dbustest.Start(t)
-	logindtest.Logind{Display: display}.Serve(t, system.Conn(t))
+	logindtest.Serve(t, system, logindtest.Config{Display: display})
 	auth.Serve(t, system.Conn(t))
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(), processEnv+"=1",
@@ -101,7 +101,7 @@ func TestExitsNonZeroWhenRefused(t *testing.T) {
 	t.Parallel()
 
 	auth := polkittest.New()
-	auth.Preregister(polkit.SessionSubject(display.ID))
+	auth.Preregister(polkit.SessionSubject(display))
 	cmd, stderr, _ := startAgent(t, auth)
 	err := cmd.Wait()
 	if exit, ok := errors.AsType[*exec.ExitError](err); !ok || exit.ExitCode() == 0 {
@@ -162,7 +162,7 @@ func TestRevokeGivesUpTheRetainedAuthorizations(t *testing.T) {
 	t.Parallel()
 
 	auth := polkittest.New()
-	auth.SetTemporary([]polkit.TemporaryAuthorization{{ID: "tmpauthz0", ActionID: "org.example.keep", Subject: polkit.SessionSubject(display.ID), Obtained: 1, Expires: 301}})
+	auth.SetTemporary([]polkit.TemporaryAuthorization{{ID: "tmpauthz0", ActionID: "org.example.keep", Subject: polkit.SessionSubject(display), Obtained: 1, Expires: 301}})
 	_, _, session := startAgent(t, auth)
 	next(t, auth)
 	conn := session.Conn(t)

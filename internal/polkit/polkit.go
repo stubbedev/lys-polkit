@@ -10,9 +10,8 @@ import (
 	"time"
 
 	"github.com/stubbedev/lys-lib/dbusx"
+	"github.com/stubbedev/lys-lib/logind"
 	dbus "github.com/stubbedev/lys-lib/third_party/godbus"
-
-	"github.com/stubbedev/lys-polkit/internal/logind"
 )
 
 // D-Bus identity of polkitd's Authority, and of the agent lys-polkit
@@ -45,6 +44,23 @@ type Subject struct {
 // SessionSubject is the unix-session subject for a logind session.
 func SessionSubject(id logind.SessionID) Subject {
 	return Subject{Kind: "unix-session", Details: map[string]dbus.Variant{"session-id": dbus.MakeVariant(string(id))}}
+}
+
+// CallerSubject is the session subject polkitd attributes the calling
+// process to, asking logind on system: the process's own session when
+// it is in one, else its user's display session. A user service runs
+// outside any session, so polkitd resolves it through the display
+// session, and an agent registering for any other session is refused.
+func CallerSubject(ctx context.Context, system *dbus.Conn) (Subject, error) {
+	session, err := logind.NewManager(system).GetSession(ctx, logind.AutoSession)
+	if err != nil {
+		return Subject{}, err
+	}
+	id, err := session.ID(ctx)
+	if err != nil {
+		return Subject{}, err
+	}
+	return SessionSubject(id), nil
 }
 
 func (s Subject) String() string {
