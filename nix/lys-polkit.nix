@@ -10,7 +10,7 @@ buildGo127Module {
   pname = "lys-polkit";
   inherit version src;
 
-  vendorHash = "sha256-fZ8o4+pdLXl+MVc9KLLTR9FpbPBaDEGOtJI9vVlOxZY=";
+  vendorHash = "sha256-BEKbrKWJnyKqpVWbq9RCUKuakpCeksrU6UdcB14CwGs=";
 
   subPackages = ["."];
 
