@@ -69,25 +69,52 @@ type Registration struct {
 // such as another agent already registered for the subject, ends Serve
 // with polkitd's error. changed runs on Serve's goroutine after each
 // registration and on each of the Authority's Changed signals.
-func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any, changed func()) error {
+func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any, changed func()) (err error) {
 	unexport, err := dbusx.Export(conn, AgentPath, dbusx.Interface{Name: libpolkit.AgentInterface, Methods: agent})
 	if err != nil {
 		return fmt.Errorf("export polkit agent at %s: %w", AgentPath, err)
 	}
 	defer unexport()
 
-	signals := make(chan *dbus.Signal, 16)
-	conn.Signal(signals)
-	defer conn.RemoveSignal(signals)
-	for _, match := range [][]dbus.MatchOption{dbusx.OwnerMatch(libpolkit.BusName), libpolkit.ChangedMatch()} {
-		if err := conn.AddMatchSignalContext(ctx, match...); err != nil {
-			return fmt.Errorf("watch %s: %w", libpolkit.BusName, err)
+	watching, stopWatching := context.WithCancel(context.WithoutCancel(ctx))
+	defer stopWatching()
+	events := make(chan authorityEvent, 16)
+	undecoded := make(chan error, 1)
+	post := func(e authorityEvent) {
+		select {
+		case events <- e:
+		case <-watching.Done():
 		}
-		defer func() { _ = conn.RemoveMatchSignal(match...) }()
 	}
+	watch, err := dbusx.WatchSignals(watching, conn, dbusx.FromOwner(libpolkit.BusName),
+		func(err error) {
+			select {
+			case undecoded <- err:
+			default:
+			}
+		},
+		dbusx.On(libpolkit.Changed, libpolkit.AuthorityPath, func(libpolkit.AuthorityChanged, dbus.Sequence) error {
+			post(authorityEvent{})
+			return nil
+		}),
+		dbusx.OnOwnerChange(libpolkit.BusName, func(_, owner string, announced dbus.Sequence) error {
+			if owner == "" {
+				return nil
+			}
+			post(authorityEvent{appeared: true, announced: announced})
+			return nil
+		}))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		stopWatching()
+		if stopErr := watch.Stop(); !errors.Is(stopErr, dbusx.ErrDisconnected) {
+			err = errors.Join(err, stopErr)
+		}
+	}()
 
 	authority := libpolkit.NewAuthority(conn)
-	changedSignal := libpolkit.Changed.Name()
 	calls := context.WithoutCancel(ctx)
 	registered, err := authority.RegisterAuthenticationAgent(calls, r.Subject, r.Locale, AgentPath)
 	if err != nil {
@@ -98,15 +125,16 @@ func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any, chan
 		select {
 		case <-ctx.Done():
 			return authority.UnregisterAuthenticationAgent(calls, r.Subject, AgentPath)
-		case sig, ok := <-signals:
-			if !ok {
-				return errors.New("system bus connection closed")
-			}
-			if sig.Path == libpolkit.AuthorityPath && sig.Name == changedSignal {
+		case <-watch.Done():
+			return errors.New("system bus connection closed")
+		case err := <-undecoded:
+			return fmt.Errorf("watch %s: %w", libpolkit.BusName, err)
+		case e := <-events:
+			if !e.appeared {
 				changed()
 				continue
 			}
-			if _, owner, isAuthority := dbusx.NameOwnerChange(sig, libpolkit.BusName); !isAuthority || owner == "" || sig.Sequence <= registered {
+			if e.announced <= registered {
 				continue
 			}
 			if registered, err = authority.RegisterAuthenticationAgent(calls, r.Subject, r.Locale, AgentPath); err != nil {
@@ -115,4 +143,12 @@ func Serve(ctx context.Context, conn *dbus.Conn, r Registration, agent any, chan
 			changed()
 		}
 	}
+}
+
+// authorityEvent is what Serve's watch saw of polkitd, in order: the
+// Authority's Changed signal, or its name gaining an owner, announced
+// at a sequence of the connection.
+type authorityEvent struct {
+	appeared  bool
+	announced dbus.Sequence
 }
