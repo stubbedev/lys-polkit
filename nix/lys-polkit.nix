@@ -1,12 +1,12 @@
 {
   lib,
-  buildGo127Module,
+  buildGoModule,
   dbus,
   getent,
   version,
   src,
 }:
-buildGo127Module {
+buildGoModule {
   pname = "lys-polkit";
   inherit version src;
 

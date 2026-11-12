@@ -1,5 +1,6 @@
 {
   perSystem = {
+    inputs',
     lib,
     pkgs,
     ...
@@ -19,6 +20,7 @@
     packages.default = pkgs.callPackage ./lys-polkit.nix {
       version = "0-unstable-${lib.substring 0 8 (builtins.unsafeDiscardStringContext (baseNameOf src))}";
       inherit src;
+      buildGoModule = pkgs.buildGoModule.override {go = inputs'.devtools.packages.go;};
     };
   };
 }
